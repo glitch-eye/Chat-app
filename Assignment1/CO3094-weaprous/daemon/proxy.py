@@ -32,8 +32,10 @@ import threading
 from .response import *
 from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
+
 from collections import defaultdict
 from urllib.parse import urlparse # Cần thiết để phân tích URL backend
+
 
 #: A dictionary mapping hostnames to backend IP and port tuples.
 #: Used to determine routing targets for incoming requests.
@@ -42,6 +44,7 @@ PROXY_PASS = {
     "app1.local": ('192.168.56.103', 9001),
     "app2.local": ('192.168.56.103', 9002),
 }
+
 
 class LoadBalancer:
     """Quản lý các chính sách cân bằng tải, hiện tại là Round-Robin."""
@@ -99,6 +102,7 @@ class LoadBalancer:
             proxy_host, proxy_port = proxy_map.split(":", 2)
 
         return proxy_host, proxy_port
+
 def forward_request(host, port, request):
     """
     Forwards an HTTP request to a backend server and retrieves the response.
@@ -135,7 +139,51 @@ def forward_request(host, port, request):
         ).encode('utf-8')
 
 
+
 load_balancer = None
+
+def resolve_routing_policy(hostname, routes):
+    """
+    Handles an routing policy to return the matching proxy_pass.
+    It determines the target backend to forward the request to.
+
+    :params host (str): IP address of the request target server.
+    :params port (int): port number of the request target server.
+    :params routes (dict): dictionary mapping hostnames and location.
+    """
+
+    print(hostname)
+    proxy_map, policy = routes.get(hostname,('127.0.0.1:9000','round-robin'))
+    print proxy_map
+    print policy
+
+    proxy_host = ''
+    proxy_port = '9000'
+    if isinstance(proxy_map, list):
+        if len(proxy_map) == 0:
+            print("[Proxy] Emtpy resolved routing of hostname {}".format(hostname))
+            print "Empty proxy_map result"
+            # TODO: implement the error handling for non mapped host
+            #       the policy is design by team, but it can be 
+            #       basic default host in your self-defined system
+            # Use a dummy host to raise an invalid connection
+            proxy_host = '127.0.0.1'
+            proxy_port = '9000'
+        elif len(value) == 1:
+            proxy_host, proxy_port = proxy_map[0].split(":", 2)
+        #elif: # apply the policy handling 
+        #   proxy_map
+        #   policy
+        else:
+            # Out-of-handle mapped host
+            proxy_host = '127.0.0.1'
+            proxy_port = '9000'
+    else:
+        print("[Proxy] resolve route of hostname {} is a singulair to".format(hostname))
+        proxy_host, proxy_port = proxy_map.split(":", 2)
+
+    return proxy_host, proxy_port
+
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -167,6 +215,7 @@ def handle_client(ip, port, conn, addr, routes):
 
     # Resolve the matching destination in routes and need conver port
     # to integer value
+
     resolved_host, resolved_port = LoadBalancer().resolve_routing_policy(hostname, routes)
     try:
         resolved_port = int(resolved_port)
