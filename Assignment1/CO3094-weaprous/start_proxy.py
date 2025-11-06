@@ -39,7 +39,8 @@ import socket
 import threading
 import argparse
 import re
-from urlparse import urlparse
+# from urlparse import urlparse
+from urllib.parse import urlparse
 from collections import defaultdict
 
 from daemon import create_proxy
@@ -55,8 +56,14 @@ def parse_virtual_hosts(config_file):
     :rtype list of dict: Each dict contains 'listen'and 'server_name'.
     """
 
-    with open(config_file, 'r') as f:
-        config_text = f.read()
+
+    try:
+        with open(config_file, 'r') as f:
+            config_text = f.read()
+    except FileNotFoundError:
+        print(f"Error: Config file '{config_file}' not found.")
+        return {}
+
 
     # Match each host block
     host_blocks = re.findall(r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
@@ -65,20 +72,19 @@ def parse_virtual_hosts(config_file):
 
     routes = {}
     for host, block in host_blocks:
-        proxy_map = {}
 
         # Find all proxy_pass entries
         proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
-        map = proxy_map.get(host,[])
-        map = map + proxy_passes
-        proxy_map[host] = map
+
 
         # Find dist_policy if present
         policy_match = re.search(r'dist_policy\s+(\w+)', block)
         if policy_match:
             dist_policy_map = policy_match.group(1)
         else: #default policy is round_robin
-            dist_policy_map = 'round-robin'
+
+            dist_policy_map = 'single' if len(proxy_passes) <= 1 else 'round-robin'
+
             
         #
         # @bksysnet: Build the mapping and policy
@@ -88,16 +94,17 @@ def parse_virtual_hosts(config_file):
         #       the policy is applied to identify the highes matching
         #       proxy_pass
         #
-        if len(proxy_map.get(host,[])) == 1:
-            routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
-        # esle if:
-        #         TODO:  apply further policy matching here
-        #
+        if not proxy_passes:
+            print(f"[Parser] WARNING: Host '{host}' has no 'proxy_pass' defined. Skipping or using default.")
+            targets = []
         else:
-            routes[host] = (proxy_map.get(host,[]), dist_policy_map)
+            # targets = [f"http://{p}" for p in proxy_passes]
+            targets = [f"{p}" for p in proxy_passes]
+
+        routes[host] = (targets, dist_policy_map)
 
     for key, value in routes.items():
-        print key, value
+        print(f"[{key}]: {value[0]} | Policy: {value[1]}")
     return routes
 
 
