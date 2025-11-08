@@ -204,7 +204,7 @@ class Response():
 
         :rtype tuple: (int, bytes) representing content length and content data.
         """
-
+        
         filepath = os.path.join(base_dir, path.lstrip('/'))
         print("[Response] serving the object at location {}".format(filepath))
         
@@ -251,7 +251,7 @@ class Response():
         headers = {
             "Accept": "{}".format(reqhdr.get("Accept", "application/json")),
             "Accept-Language": "{}".format(reqhdr.get("Accept-Language", "en-US,en;q=0.9")),
-            "Authorization": "{}".format(reqhdr.get("Authorization", "Basic <credentials>")),
+            "Authorization": "{}".format(reqhdr.get("Authorization", False)),
             "Cache-Control": "no-cache",
             "Content-Type": "{}".format(rsphdr.get("Content-Type", "text/html")),
             "Content-Length": "{}".format(len(self._content)),
@@ -268,7 +268,10 @@ class Response():
         #
         # TODO prepare the request authentication
         #
-        self.auth = reqhdr.get("Authorization") or reqhdr.get("authorization")
+        self.auth = reqhdr.get("authorization")
+        if self.auth is False:
+            c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")
+            headers["Content-Length"] = "{}".format(len(self._content))
 
         status_line = "HTTP/1.1 {} {}\r\n".format(
             self.status_code if self.status_code else 200,
@@ -287,8 +290,8 @@ class Response():
         if hasattr(self, "cookies") and self.cookies:
             for ck, cv in self.cookies.items():
                 fmt_header += "Set-Cookie: {}={}; Path=/\r\n".format(ck, cv)
-        if 'Set-Cookie' in rsphdr:
-            fmt_header += "Set-Cookie: {}\r\n".format(rsphdr['Set-Cookie'])
+        if 'Set-Cookie' in reqhdr.keys():
+            fmt_header += "Set-Cookie: {}\r\n".format(reqhdr['Set-Cookie'])
 
         fmt_header += "\r\n"
         return str(fmt_header).encode('utf-8')
@@ -324,6 +327,8 @@ class Response():
         """
 
         path = request.path
+        if path == "/":
+            path = "/index.html"
 
         mime_type = self.get_mime_type(path)
         print("[Response] {} path {} mime_type {}".format(request.method, request.path, mime_type))

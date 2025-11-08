@@ -109,9 +109,9 @@ class HttpAdapter:
         #: Response
         self.response = Response()
         # 🟢 FIX: Load nội dung trang từ thư mục www khi khởi tạo
-        self.INDEX_PAGE = self._load_page_content("index.html")
-        self.LOGIN_PAGE = self._load_page_content("login.html")
-        self.UNAUTHORIZED_PAGE = self._load_page_content("unauthorize.html")
+        # self.INDEX_PAGE = self._load_page_content("index.html")
+        # self.LOGIN_PAGE = self._load_page_content("login.html")
+        # self.UNAUTHORIZED_PAGE = self._load_page_content("unauthorize.html")
 
     def _load_page_content(self, filename):
         """Đọc nội dung file HTML từ thư mục www."""
@@ -165,8 +165,7 @@ class HttpAdapter:
         req.prepare(msg, routes)
 
         resp.status_code = 404
-        resp.body = b"<h1>404 Not Found</h1>" 
-        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+       
         
         is_handled = False
 
@@ -178,17 +177,13 @@ class HttpAdapter:
                 # Handler sẽ cập nhật trực tiếp resp
                 req.hook(request=req, response=resp, adapter=self) 
                 
-                if resp.status_code is None: resp.status_code = 200
-                if resp.body is None: resp.body = b""
             except Exception as e:
                 print(f"[Adapter] Error executing handler for {req.url}: {e}")
                 resp.status_code = 500
-                resp.body = b"Internal Server Error"
+                resp.reason = "Internal Server Error"
             
             is_handled = True
             
-        # 4. Xây dựng Response và gửi (Dù là Hook hay 404)
-        resp.headers['Content-Length'] = str(len(resp.body))
         
         response_data = resp.build_response(req)
 

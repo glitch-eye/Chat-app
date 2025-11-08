@@ -65,6 +65,7 @@ class Request():
         self.routes = {}
         #: Hook point for routed mapped-path
         self.hook = None
+        self.auth = False
     def _prepare_cookies(self):
         """Phân tích raw 'Cookie' header và lưu vào self.cookies."""
         # FIX: Sửa TODO #1
@@ -132,7 +133,7 @@ class Request():
         self.body = raw_body_bytes
 
         self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('cookie', '')
+        cookies = self.headers.get('Set-Cookie', {})
             #
             #  TODO: implement the cookie function here
             #        by parsing the header            #
@@ -162,11 +163,11 @@ class Request():
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
+        self.auth = auth
         self.url = url
         return
 
     def prepare_cookies(self, cookies):
-        self.headers["cookie"] = cookies
+        self.headers["Set-Cookie"] = cookies
         self.cookies = cookies
         

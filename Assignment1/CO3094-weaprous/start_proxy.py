@@ -78,12 +78,12 @@ def parse_virtual_hosts(config_file):
 
 
         # Find dist_policy if present
-        policy_match = re.search(r'dist_policy\s+(\w+)', block)
+        policy_match = re.search(r'dist_policy\s+(\S+)', block)
         if policy_match:
             dist_policy_map = policy_match.group(1)
         else: #default policy is round_robin
 
-            dist_policy_map = 'single' if len(proxy_passes) <= 1 else 'round-robin'
+            dist_policy_map = 'single' if len(proxy_passes) <= 1 else 'round_robin'
 
             
         #
