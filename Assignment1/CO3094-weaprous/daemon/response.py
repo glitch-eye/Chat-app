@@ -118,6 +118,8 @@ class Response():
         #: is a response.
         self.request = None
 
+        self.body = b""
+
 
     def get_mime_type(self, path):
         """

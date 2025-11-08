@@ -65,28 +65,41 @@ class Request():
         self.routes = {}
         #: Hook point for routed mapped-path
         self.hook = None
-
+    def _prepare_cookies(self):
+        """Phân tích raw 'Cookie' header và lưu vào self.cookies."""
+        # FIX: Sửa TODO #1
+        cookies_header = self.headers.get('cookie', '') 
+        
+        if cookies_header:
+            for pair in cookies_header.split(';'):
+                pair = pair.strip()
+                if '=' in pair:
+                    key, value = pair.split('=', 1)
+                    # Lưu vào CaseInsensitiveDict của cookies
+                    self.cookies[key.strip()] = value.strip()
+        return
     def extract_request_line(self, request):
         try:
             lines = request.splitlines()
             first_line = lines[0]
             method, path, version = first_line.split()
 
-            if path == '/':
-                path = '/index.html'
+            # if path == '/':
+            #     path = '/index.html'
+            """bỏ chuyển hướng theo logic chuyển hướng khi authorize"""
         except Exception:
-            return None, None
+            return None, None, None
 
         return method, path, version
              
     def prepare_headers(self, request):
         """Prepares the given HTTP headers."""
         lines = request.split('\r\n')
-        headers = {}
+        headers = CaseInsensitiveDict()
         for line in lines[1:]:
             if ': ' in line:
                 key, val = line.split(': ', 1)
-                headers[key.lower()] = val
+                headers[key] = val
         return headers
 
     def prepare(self, request, routes=None):
@@ -94,8 +107,11 @@ class Request():
 
         # Prepare the request line from the request header
         self.method, self.path, self.version = self.extract_request_line(request)
+        if self.method is None:
+            # Yêu cầu không hợp lệ
+            return
         print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
-
+        self.url = self.path.split("/")[-1]
         #
         # @bksysnet Preapring the webapp hook with WeApRous instance
         # The default behaviour with HTTP server is empty routed
@@ -110,18 +126,22 @@ class Request():
             # self.hook manipulation goes here
             # ...
             #
+        head, raw_body_str = request.split('\r\n\r\n', 1)
+        raw_body_bytes = raw_body_str.encode('utf-8')
+
+        self.body = raw_body_bytes
 
         self.headers = self.prepare_headers(request)
         cookies = self.headers.get('cookie', '')
             #
             #  TODO: implement the cookie function here
             #        by parsing the header            #
+        self.prepare_cookies(cookies)
 
         return
 
     def prepare_body(self, data, files, json=None):
         self.prepare_content_length(self.body)
-        self.body = body
         #
         # TODO prepare the request authentication
         #
@@ -130,7 +150,7 @@ class Request():
 
 
     def prepare_content_length(self, body):
-        self.headers["Content-Length"] = "0"
+        self.headers["Content-Length"] = len(body)
         #
         # TODO prepare the request authentication
         #
@@ -143,7 +163,10 @@ class Request():
         # TODO prepare the request authentication
         #
 	# self.auth = ...
+        self.url = url
         return
 
     def prepare_cookies(self, cookies):
-            self.headers["Cookie"] = cookies
+        self.headers["cookie"] = cookies
+        self.cookies = cookies
+        
