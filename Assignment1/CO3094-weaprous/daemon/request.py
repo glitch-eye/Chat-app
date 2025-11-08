@@ -65,6 +65,7 @@ class Request():
         self.routes = {}
         #: Hook point for routed mapped-path
         self.hook = None
+        self.auth = False
     def _prepare_cookies(self):
         """Phân tích raw 'Cookie' header và lưu vào self.cookies."""
         # FIX: Sửa TODO #1
@@ -162,7 +163,7 @@ class Request():
         #
         # TODO prepare the request authentication
         #
-	# self.auth = ...
+        self.auth = auth
         self.url = url
         return
 
