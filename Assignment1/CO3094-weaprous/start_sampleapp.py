@@ -54,22 +54,32 @@ Value: {'username': str, 'ip': str, 'p2p_port': int, 'status': str, 'channels': 
 
 def check_authentication(request, response, adapter):
     """Kiểm tra session_id trong Cookie và trả về username."""
-    session_id = request.cookies.get('session_id')
+    cookies = request.headers.get("Set-Cookie")
+    if cookies is None:
+        response.status_code = 401
+        response.reason = "Unauthorized"
+        request.headers["authorization"] = False
+        return None
+    session_id = cookies.get('session_id')
 
     if session_id is None:
-        # THẤT BẠI: Phục vụ Login 401
         response.status_code = 401
-        response.body = adapter.UNAUTHORIZED_PAGE
+        response.reason = "Unauthorized"
+        request.headers["authorization"] = False
+        return None
     
     with STATE_LOCK:
         user_session = SESSION_STORE.get(session_id)
 
     if not user_session:
         response.status_code = 401
-        response.body = adapter.UNAUTHORIZED_PAGE
-        response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        response.reason = "Unauthorized"
+        request.headers["authorization"] = False
         return None
-    
+    response.status_code = 200
+    response.reason = "OK"
+    request.headers["authorization"] = True
+
     return user_session['username']
 
 @app.route('/', methods=['GET'])
@@ -77,12 +87,9 @@ def home_route(request, response, adapter):
     """
     TASK 1B (Mới): Xử lý GET / (Đọc và Kiểm tra Session ID)
     """
-    if check_authentication(request, response, adapter) is not None:
-        response.status_code = 200
-        response.body = adapter.INDEX_PAGE
-
-    
-    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    print("-------------------------------------")
+    check_authentication(request, response, adapter)
+        
 
 
 @app.route('/login', methods=['POST'])
@@ -100,51 +107,220 @@ def login_route(request, response, adapter):
         # 1. 🟢 TẠO Session ID MỚI VÀ DUY NHẤT
         session_id = str(uuid.uuid4())
         
-        # 2. 🟢 LƯU THÔNG TIN SESSION VÀO STORE
-        SESSION_STORE[session_id] = {'username': username}
+        with STATE_LOCK:
+            SESSION_STORE[session_id] = {
+                'username': username,
+                'ip': None,           # Sẽ được set bởi /submit-info
+                'p2p_port': None,     # Sẽ được set bởi /submit-info
+                'channels': [],
+                'status': 'offline'
+            }
         
-        # 3. 🟢 GÁN HEADER SET-COOKIE VÀ GỬI ID VỀ CLIENT
         # HttpOnly ngăn chặn XSS đọc cookie, Max-Age là 1 giờ (3600 giây)
-        session_cookie = f"session_id={session_id}; Max-Age=3600; Path=/; HttpOnly" 
+        session_cookie = f"sessionid={session_id}" 
         # response.headers['Set-Cookie'] = session_cookie
         request.prepare_cookies(session_cookie)
-        response.status_code = 200
-        response.body = adapter.INDEX_PAGE
+        
         print(f"[AUTH] User {username} logged in. Session ID: {session_id}")
     else:
-        # Thất bại: 401 Unauthorized
         response.status_code = 401
-        response.body = adapter.UNAUTHORIZED_PAGE
-    
-    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+        response.reason = "Unauthorized"
+        request.headers["authorization"] = False
 
+@app.route('/submit-info', methods=['POST'])
+def submit_info_route(request, response, adapter):
+    """
+    Peer Registration: Cập nhật IP và P2P Port của Peer vào Tracker.
+    """
+    session_id = request.cookies.get('session_id')
+    
+    if check_authentication(request, response, adapter) is None:
+        return 
+    
+
+    body_params = parse_body_params(request.body)
+    ip = body_params.get('ip')
+    p2p_port = body_params.get('p2p_port')
+
+    if not ip or not p2p_port:
+        response.status_code = 400
+        response.reason = b'{"Missing IP or P2P port in body"}'
+        response.headers['Content-Type'] = 'application/json'
+        return
+
+    with STATE_LOCK:
+        # 1. Cập nhật thông tin P2P
+        SESSION_STORE[session_id]['ip'] = ip
+        try:
+            SESSION_STORE[session_id]['p2p_port'] = int(p2p_port)
+        except ValueError:
+            response.status_code = 400
+            response.reason = b'{"p2p_port must be an integer"}'
+            response.headers['Content-Type'] = 'application/json'
+            return
+            
+        # 2. Đặt trạng thái Online
+        SESSION_STORE[session_id]['status'] = 'online'
+        
+    
+    response.status_code = 200
+    response.body = json.dumps({
+        "status": "info updated", 
+        "p2p_address": f"{ip}:{p2p_port}"
+    }).encode('utf-8')
+    response.headers['Content-Type'] = 'application/json'
+
+@app.route('/add-list', methods=['POST'])
+def add_list_route(request, response, adapter):
+    """
+    Channel Listing/Join: Tham gia/Tạo một Kênh.
+    """
+    session_id = request.cookies.get('session_id')
+    if check_authentication(request, response, adapter) is None:
+        return 
+    
+    body_params = parse_body_params(request.body)
+    channel_name = body_params.get('channel_name')
+    
+    if not channel_name:
+        response.status_code = 400
+        response.body = b'{"error": "Missing channel_name in body"}'
+        response.headers['Content-Type'] = 'application/json'
+        return
+
+    with STATE_LOCK:
+        # 1. Thêm Channel nếu chưa tồn tại
+        if channel_name not in CHANNEL_STORE:
+            CHANNEL_STORE[channel_name] = set()
+            
+        # 2. Thêm Peer vào CHANNEL_STORE
+        CHANNEL_STORE[channel_name].add(session_id)
+        
+        # 3. Cập nhật danh sách kênh của Peer
+        if channel_name not in SESSION_STORE[session_id].get('channels', []):
+            SESSION_STORE[session_id].setdefault('channels', []).append(channel_name)
+    
+    response.status_code = 200
+    response.body = json.dumps({"status": f"Joined channel {channel_name}", "channel": channel_name}).encode('utf-8')
+    response.headers['Content-Type'] = 'application/json'
+
+@app.route('/get-list', methods=['GET'])
+def get_list_route(request, response, adapter):
+    """
+    Peer Discovery: Trả về danh sách Peers (IP:Port P2P) trong một kênh.
+    
+    Yêu cầu query param: ?channel=<channel_name>
+    """
+    if check_authentication(request, response, adapter) is None:
+        return 
+    
+    # Giả định request.url_params chứa query parameters (ví dụ: ?channel=...)
+    channel_name = request.url_params.get('channel') if hasattr(request, 'url_params') else None
+    
+    if not channel_name:
+        response.status_code = 400
+        response.body = b'{"error": "Missing channel query parameter"}'
+        response.headers['Content-Type'] = 'application/json'
+        return
+
+    peers_data = []
+    with STATE_LOCK:
+        target_sessions = CHANNEL_STORE.get(channel_name)
+        
+        if not target_sessions:
+            response.status_code = 404
+            response.body = b'{"error": "Channel not found"}'
+            response.headers['Content-Type'] = 'application/json'
+            return
+
+        for sid in target_sessions:
+            peer = SESSION_STORE.get(sid)
+            # Chỉ liệt kê các peers đã đăng ký thông tin P2P và đang online
+            if peer and peer.get('ip') and peer.get('p2p_port') and peer.get('status') == 'online':
+                peers_data.append({
+                    "username": peer['username'],
+                    "ip": peer['ip'],
+                    "port": peer['p2p_port'],
+                    "session_id": sid
+                })
+
+    response.status_code = 200
+    response.body = json.dumps({"channel": channel_name, "peers": peers_data}).encode('utf-8')
+    response.headers['Content-Type'] = 'application/json'
+
+@app.route('/connect-peer', methods=['GET'])
+def connect_peer_route(request, response, adapter):
+    """
+    Lấy thông tin P2P của một Peer cụ thể bằng Session ID.
+    
+    Yêu cầu query param: ?session_id=<target_session_id>
+    """
+    if check_authentication(request, response, adapter) is None:
+        return 
+    
+    # Giả định request.url_params chứa query parameters (ví dụ: ?session_id=...)
+    target_sid = request.url_params.get('session_id') if hasattr(request, 'url_params') else None
+    
+    if not target_sid:
+        response.status_code = 400
+        response.body = b'{"error": "Missing session_id query parameter"}'
+        response.headers['Content-Type'] = 'application/json'
+        return
+
+    with STATE_LOCK:
+        peer = SESSION_STORE.get(target_sid)
+
+    if peer and peer.get('ip') and peer.get('p2p_port') and peer.get('status') == 'online':
+        response.status_code = 200
+        response.body = json.dumps({
+            "username": peer['username'],
+            "ip": peer['ip'],
+            "port": peer['p2p_port']
+        }).encode('utf-8')
+        response.headers['Content-Type'] = 'application/json'
+    else:
+        response.status_code = 404
+        response.body = b'{"error": "Peer not found or P2P info missing"}'
+        response.headers['Content-Type'] = 'application/json'
+
+# =========================================================
+# 💬 ROUTE HANDLERS: DUMMY P2P ACKNOWLEDGEMENT
+# (Giao tiếp P2P thực sự diễn ra qua Socket trực tiếp)
+# =========================================================
+
+@app.route('/broadcast-peer', methods=['POST'])
+def broadcast_peer_route(request, response, adapter):
+    """Dummy Route: Thông báo Server rằng Client đang broadcast (P2P)."""
+    if check_authentication(request, response, adapter) is None:
+        return
+    
+    response.status_code = 200
+    response.body = b'{"status": "P2P Broadcast Acknowledged by Control Plane"}'
+    response.headers['Content-Type'] = 'application/json'
+
+@app.route('/send-peer', methods=['POST'])
+def send_peer_route(request, response, adapter):
+    """Dummy Route: Thông báo Server rằng Client đang gửi tin nhắn trực tiếp (P2P)."""
+    if check_authentication(request, response, adapter) is None:
+        return
+    
+    response.status_code = 200
+    response.body = b'{"status": "P2P Direct Send Acknowledged by Control Plane"}'
+    response.headers['Content-Type'] = 'application/json'
 
 @app.route('/hello', methods=['PUT'])
-def hello(request, response, adapter): # 🔴 Sửa lại chữ ký hàm
-    """Handle greeting via PUT request."""
-    # Logic kiểm tra Session ID nếu đây là API cần Auth
-    session_id = request.cookies.get('session_id')
-    if session_id in SESSION_STORE:
-        print (f"[SampleApp] ['PUT'] Hello by user {SESSION_STORE[session_id]['username']} to {request.url}")
-        response.status_code = 200
-        response.body = b"Hello Handled by Route!"
-    else:
-        response.status_code = 401
-        response.body = adapter.UNAUTHORIZED_PAGE
-    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+def hello(headers, body):
+    """
+    Handle greeting via PUT request.
 
-# @app.route('/hello', methods=['PUT'])
-# def hello(headers, body):
-#     """
-#     Handle greeting via PUT request.
+    This route prints a greeting message to the console using the provided headers
+    and body.
 
-#     This route prints a greeting message to the console using the provided headers
-#     and body.
+    :param headers (str): The request headers or user identifier.
+    :param body (str): The request body or message payload.
+    """
+    print ("[SampleApp] ['PUT'] Hello in {} to {}".format(headers, body))
 
-#     :param headers (str): The request headers or user identifier.
-#     :param body (str): The request body or message payload.
-#     """
-#     print ("[SampleApp] ['PUT'] Hello in {} to {}".format(headers, body))
 
 if __name__ == "__main__":
     # Parse command-line arguments to configure server IP and port

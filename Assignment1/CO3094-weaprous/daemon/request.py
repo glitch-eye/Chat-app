@@ -133,7 +133,7 @@ class Request():
         self.body = raw_body_bytes
 
         self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('cookie', '')
+        cookies = self.headers.get('Set-Cookie', {})
             #
             #  TODO: implement the cookie function here
             #        by parsing the header            #
@@ -168,6 +168,6 @@ class Request():
         return
 
     def prepare_cookies(self, cookies):
-        self.headers["cookie"] = cookies
+        self.headers["Set-Cookie"] = cookies
         self.cookies = cookies
         

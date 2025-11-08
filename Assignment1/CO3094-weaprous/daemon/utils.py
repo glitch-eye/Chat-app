@@ -9,8 +9,7 @@
 # and modify the Licensed Source Code for the sole purpose of studying
 # while attending the course
 #
-
-from urlparse import urlparse
+from urllib.parse import urlparse, unquote
 
 def get_auth_from_url(url):
     """Given a url with authentication components, extract them into a tuple of
