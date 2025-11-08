@@ -92,7 +92,7 @@ class LoadBalancer:
                     target_url = proxy_map[current_index % len(proxy_map)]
                     # Cập nhật chỉ mục cho lần tiếp theo
                     self.rr_index[hostname] = (current_index + 1) % len(proxy_map)
-                    proxy_host, proxy_port = urlparse.split(":", 2)
+                    proxy_host, proxy_port = target_url.split(":", 2)
             else:
                 # Out-of-handle mapped host
                 proxy_host = '127.0.0.1'
@@ -139,8 +139,7 @@ def forward_request(host, port, request):
         ).encode('utf-8')
 
 
-
-load_balancer = None
+load_balancer = LoadBalancer()
 
 def resolve_routing_policy(hostname, routes):
     """
@@ -210,13 +209,13 @@ def handle_client(ip, port, conn, addr, routes):
     for line in request.splitlines():
         if line.lower().startswith('host:'):
             hostname = line.split(':', 1)[1].strip()
-
+            break
+    
     print("[Proxy] {} at Host: {}".format(addr, hostname))
 
     # Resolve the matching destination in routes and need conver port
     # to integer value
-
-    resolved_host, resolved_port = LoadBalancer().resolve_routing_policy(hostname, routes)
+    resolved_host, resolved_port = load_balancer.resolve_routing_policy(hostname, routes)
     try:
         resolved_port = int(resolved_port)
     except ValueError:
@@ -265,6 +264,11 @@ def run_proxy(ip, port, routes):
             #        using multi-thread programming with the
             #        provided handle_client routine
             #
+            client_thread = threading.Thread(
+                target=handle_client, 
+                args=(ip, port, conn, addr, routes)
+            )
+            client_thread.start()
     except socket.error as e:
       print("Socket error: {}".format(e))
 
