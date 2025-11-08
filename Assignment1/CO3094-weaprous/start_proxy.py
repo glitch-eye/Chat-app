@@ -56,12 +56,14 @@ def parse_virtual_hosts(config_file):
     :rtype list of dict: Each dict contains 'listen'and 'server_name'.
     """
 
+
     try:
         with open(config_file, 'r') as f:
             config_text = f.read()
     except FileNotFoundError:
         print(f"Error: Config file '{config_file}' not found.")
         return {}
+
 
     # Match each host block
     host_blocks = re.findall(r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
@@ -74,12 +76,15 @@ def parse_virtual_hosts(config_file):
         # Find all proxy_pass entries
         proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
 
+
         # Find dist_policy if present
         policy_match = re.search(r'dist_policy\s+(\w+)', block)
         if policy_match:
             dist_policy_map = policy_match.group(1)
         else: #default policy is round_robin
+
             dist_policy_map = 'single' if len(proxy_passes) <= 1 else 'round-robin'
+
             
         #
         # @bksysnet: Build the mapping and policy
