@@ -19,11 +19,39 @@ http settings (headers, bodies). The adapter supports both
 raw URL paths and RESTful route definitions, and integrates with
 Request and Response objects to handle client-server communication.
 """
+import os
 
 from .request import Request
 from .response import Response
 from .dictionary import CaseInsensitiveDict
+import base64
 
+
+
+def get_base_dir():
+    return os.path.dirname(os.path.abspath(__file__))
+
+# Giữ lại _parse_body_params để các Route Handler có thể gọi
+def parse_body_params(body_bytes):
+    """Phân tích body POST (x-www-form-urlencoded) từ bytes."""
+    params = {}
+    if not body_bytes: return params
+    try:
+        body_str = body_bytes.decode('utf-8')
+        for pair in body_str.split('&'):
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                params[k.strip()] = v.strip() 
+    except:
+        pass
+    return params
+
+def get_encoding_from_headers(headers):
+    """Giả lập hàm tìm kiếm encoding từ Content-Type header."""
+    content_type = headers.get('Content-Type', '')
+    if 'charset=' in content_type:
+        return content_type.split('charset=')[-1].strip()
+    return 'utf-8'
 class HttpAdapter:
     """
     A mutable :class:`HTTP adapter <HTTP adapter>` for managing client connections
@@ -43,6 +71,7 @@ class HttpAdapter:
         request (Request): Request object for parsing incoming data.
         response (Response): Response object for building and sending replies.
     """
+    
 
     __attrs__ = [
         "ip",
@@ -79,7 +108,26 @@ class HttpAdapter:
         self.request = Request()
         #: Response
         self.response = Response()
+        # 🟢 FIX: Load nội dung trang từ thư mục www khi khởi tạo
+        self.INDEX_PAGE = self._load_page_content("index.html")
+        self.LOGIN_PAGE = self._load_page_content("login.html")
+        self.UNAUTHORIZED_PAGE = self._load_page_content("unauthorize.html")
 
+    def _load_page_content(self, filename):
+        """Đọc nội dung file HTML từ thư mục www."""
+        # FIX: Đường dẫn trỏ đến thư mục www
+        filepath = os.path.join(get_base_dir(), "www", filename)
+        
+        try:
+            with open(filepath, 'rb') as f:
+                content = f.read()
+                return content
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            return None
+       
+    
     def handle_client(self, conn, addr, routes):
         """
         Handle an incoming client connection.
@@ -103,26 +151,54 @@ class HttpAdapter:
         resp = self.response
 
         # Handle the request
-        msg = conn.recv(1024).decode()
+        try :
+            msg = conn.recv(1024).decode('utf-8')
+        except UnicodeDecodeError:
+            # Xử lý nếu client gửi dữ liệu không phải utf-8
+            print("[HttpAdapter] Error decoding request.")
+            return
+
+        if not msg:
+            conn.close()
+            return
+        
         req.prepare(msg, routes)
 
-        # Handle request hook
+        resp.status_code = 404
+        resp.body = b"<h1>404 Not Found</h1>" 
+        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+        
+        is_handled = False
+
+        # 3. 🟢 GỌI HOOK (Route Handler) NẾU TÌM THẤY
         if req.hook:
             print("[HttpAdapter] hook in route-path METHOD {} PATH {}".format(req.hook._route_path,req.hook._route_methods))
-            req.hook(headers = "bksysnet",body = "get in touch")
-            #
-            # TODO: handle for App hook here
-            #
-
-        # Build response
-        response = resp.build_response(req)
+            try:
+                # req.hook là hàm handler (ví dụ: home_route, login_route)
+                # Handler sẽ cập nhật trực tiếp resp
+                req.hook(request=req, response=resp, adapter=self) 
+                
+                if resp.status_code is None: resp.status_code = 200
+                if resp.body is None: resp.body = b""
+            except Exception as e:
+                print(f"[Adapter] Error executing handler for {req.url}: {e}")
+                resp.status_code = 500
+                resp.body = b"Internal Server Error"
+            
+            is_handled = True
+            
+        # 4. Xây dựng Response và gửi (Dù là Hook hay 404)
+        resp.headers['Content-Length'] = str(len(resp.body))
+        
+        response_data = resp.build_response(req)
 
         #print(response)
-        conn.sendall(response)
+        conn.sendall(response_data)
         conn.close()
 
     @property
-    def extract_cookies(self, req, resp):
+    # def extract_cookies(self, req, resp):
+    def extract_cookies(self, headers):
         """
         Build cookies from the :class:`Request <Request>` headers.
 
@@ -139,7 +215,7 @@ class HttpAdapter:
                     cookies[key] = value
         return cookies
 
-    def build_response(self, req, resp):
+    def build_response(self, req, resp = None):
         """Builds a :class:`Response <Response>` object 
 
         :param req: The :class:`Request <Request>` used to generate the response.
@@ -150,7 +226,7 @@ class HttpAdapter:
 
         # Set encoding.
         response.encoding = get_encoding_from_headers(response.headers)
-        response.raw = resp
+        # response.raw = resp
         response.reason = response.raw.reason
 
         if isinstance(req.url, bytes):
@@ -159,7 +235,7 @@ class HttpAdapter:
             response.url = req.url
 
         # Add new cookies from the server.
-        response.cookies = extract_cookies(req)
+        response.cookies = self.extract_cookies(req.headers)
 
         # Give the Response some context.
         response.request = req
@@ -223,7 +299,8 @@ class HttpAdapter:
         #       username, password =...
         # we provide dummy auth here
         #
-        username, password = ("user1", "password")
+        
+        username, password = ("admin", "password")
 
         if username:
             headers["Proxy-Authorization"] = (username, password)

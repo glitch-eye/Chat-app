@@ -49,7 +49,7 @@ PROXY_PASS = {
 class LoadBalancer:
     """Quản lý các chính sách cân bằng tải, hiện tại là Round-Robin."""
     
-    def __init__(self, routes):
+    def __init__(self, routes = None):
         self.routes = routes
         # rr_index lưu chỉ mục tiếp theo cho mỗi host.
         self.rr_index = defaultdict(int) 
@@ -252,7 +252,6 @@ def run_proxy(ip, port, routes):
     """
 
     proxy = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
     try:
         proxy.bind((ip, port))
         proxy.listen(50)
