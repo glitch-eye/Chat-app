@@ -26,14 +26,12 @@ and can be configured via command-line arguments.
 import os
 import json
 import socket
-import sys
 import threading # Cần thiết cho cơ chế Lock
 import argparse
 import uuid # Cần thiết để tạo ID duy nhất
 from daemon.backend import SESSION_STORE, CHANNEL_STORE, STATE_LOCK
 from daemon.weaprous import WeApRous
 from daemon.httpadapter import HttpAdapter, parse_body_params
-from http.server import BaseHTTPRequestHandler, HTTPServer # Dùng cho mô phỏng Server
 from urllib.parse import urlparse, parse_qs
 
 # 🟢 Khóa (Lock) để đảm bảo an toàn khi cập nhật trạng thái chung
@@ -89,28 +87,6 @@ def load_and_modify_html(filename, serverurl):
 INDEX_PAGE = _load_page_content("index.html")
 LOGIN_PAGE = _load_page_content("login.html")
 UNAUTHORIZED_PAGE = _load_page_content("unauthorize.html")
-
-class BackendHandler(BaseHTTPRequestHandler):
-    """Handler mô phỏng chạy app.route"""
-    def do_GET(self): 
-        global INDEX_PAGE
-        global UNAUTHORIZED_PAGE
-        global LOGIN_PAGE
-        if self.path == '/index.html':
-            self.send_response(200)
-            self.send_header("Content-type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(INDEX_PAGE)
-        elif self.path == '/login.html':
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(LOGIN_PAGE)
-        else:
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(UNAUTHORIZED_PAGE)
-            print(UNAUTHORIZED_PAGE)
-
 
 
 def check_authentication(request, response, adapter):
@@ -398,14 +374,5 @@ if __name__ == "__main__":
 
     # Prepare and launch the RESTful application
     app.prepare_address(ip, port)
-    INDEX_PAGE = load_and_modify_html("index.html",f"http://{ip}:{port}")
-    LOGIN_PAGE = load_and_modify_html("login.html", f"http://{ip}:{port}")
-    UNAUTHORIZED_PAGE = load_and_modify_html("unauthorize.html", f"http://{ip}:{port}")    
-    print(f"[{os.getpid()}] Backend Server running at http://{ip}:{port}")
-    server = HTTPServer((ip, port), BackendHandler)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        server.server_close()
-        sys.exit(0)
+    
     app.run()

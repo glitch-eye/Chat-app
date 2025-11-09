@@ -1,10 +1,9 @@
-# run_client_scenario.py
 import socket
 import argparse
-import webbrowser 
-import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, parse_qs
+import re
+from io import StringIO # Dùng để đọc Response dễ dàng hơn
 
 # =======================================================
 # CẤU HÌNH
@@ -12,10 +11,6 @@ from urllib.parse import urlencode
 DEFAULT_PROXY_IP = '127.0.0.1' 
 DEFAULT_PROXY_PORT = 8080      
 TARGET_HOST_APP1 = "app2.local" 
-TARGET_HOST_APP2 = "app2.local"
-
-DEFAULT_BACKEND_IP = '0.0.0.0'
-DEFAULT_BACKEND_PORT = 8000 
 
 # --- HÀM GIAO TIẾP VỚI PROXY (Sử dụng socket) ---
 
@@ -42,57 +37,163 @@ def send_http_request(host, port, method, path, headers=None, body=None, proxy_h
     request_data = request_line + "\r\n".join(header_lines) + "\r\n\r\n"
     request_data_bytes = request_data.encode('utf-8') + body_bytes
     
+    response_data = b""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((host, port))
             s.sendall(request_data_bytes)
             
-            response_data = b""
+            # Đọc Response
+            s.settimeout(2.0) 
             while True:
                 chunk = s.recv(4096)
                 if not chunk: break
                 response_data += chunk
             
-            response_text = response_data.decode('utf-8', errors='ignore')
-            status_line = response_text.split('\r\n')[0]
-            status_code = status_line.split(' ')[1] if len(status_line.split(' ')) > 1 else 'N/A'
+            return parse_response(response_data)
             
-            return status_code, None, response_text
     except Exception as e:
-        print(f"[ERROR] Lỗi kết nối đến Proxy: {e}")
-        return None, None, None
+        print(f"[ERROR] Lỗi kết nối đến Proxy {host}:{port}: {e}")
+        return None, None, None, None
 
+def parse_response(response_data):
+    """Phân tích Response bytes thành Status, Headers, và Body."""
+    if not response_data:
+        return None, None, None, None
+        
+    try:
+        # Tách Header và Body
+        header_body_split = response_data.find(b'\r\n\r\n')
+        if header_body_split == -1:
+            return 'N/A', b'', {}, b''
 
-# =======================================================
-# KỊCH BẢN CHÍNH (CLIENT)
-# =======================================================
+        header_bytes = response_data[:header_body_split]
+        body_bytes = response_data[header_body_split + 4:]
+        
+        header_text = header_bytes.decode('utf-8', errors='ignore')
+        lines = header_text.split('\r\n')
+        
+        status_line = lines[0]
+        status_code = status_line.split(' ')[1] if len(status_line.split(' ')) > 1 else 'N/A'
+        
+        # Phân tích Headers
+        headers = {}
+        for line in lines[1:]:
+            if ': ' in line:
+                key, value = line.split(': ', 1)
+                headers[key.lower()] = value.strip()
+                
+        return status_code, header_text, headers, body_bytes
+
+    except Exception as e:
+        print(f"[ERROR] Lỗi phân tích Response: {e}")
+        return 'N/A', b'', {}, b''
+
+# --- HÀM MÔ PHỎNG BROWSER ---
+
+def console_render_html(html_body_bytes):
+    """Mô phỏng 'render' HTML bằng cách trích xuất Form và in ra Console."""
+    
+    html_text = html_body_bytes.decode('utf-8', errors='ignore')
+    
+    print("--- CONSOLE RENDERER (Mô phỏng Giao diện Form) ---")
+    
+    # 1. Trích xuất Form (Regex đơn giản)
+    # Tìm kiếm thẻ <form> và các input fields
+    form_match = re.search(r'<form\s+method="(?P<method>POST)"\s+action="(?P<action>/login|/login/?)".*?>(?P<content>.*?)</form>', html_text, re.DOTALL | re.IGNORECASE)
+
+    if form_match:
+        form_action = form_match.group('action')
+        form_content = form_match.group('content')
+        
+        print(f"  [Form Action]: POST {form_action}")
+        
+        # 2. Trích xuất Input Fields (Regex đơn giản)
+        input_fields = re.findall(r'<input.*?name="(?P<name>.*?)".*?>', form_content, re.IGNORECASE)
+        
+        print(f"  [Input Fields]: {input_fields}")
+        print("-----------------------------------------------------")
+        
+        # Mô phỏng quá trình tương tác (Tự động điền)
+        simulated_data = {}
+        if 'username' in input_fields and 'password' in input_fields:
+            simulated_data = {"username": "admin", "password": "password"}
+            print(f"  ✅ Mô phỏng người dùng nhập: {simulated_data}")
+            print("  ✅ Mô phỏng nhấn nút Submit...")
+            return form_action, simulated_data
+            
+    else:
+        print("  ❌ Không tìm thấy Form Login hợp lệ trong Body HTML.")
+        print("  [Body Preview]:", html_text[:200].replace('\n', ' '))
+        
+    return None, None
 
 def run_scenario(proxy_ip, proxy_port):
     print("\n\n==================================================")
-    print(" 🧪 BẮT ĐẦU KỊCH BẢN CLIENT (SERVER-SIDE MODIFIED) ")
+    print(" 🧪 BẮT ĐẦU KỊCH BẢN MÔ PHỎNG BROWSER (TASK 1A/1B) ")
     print("==================================================")
     
-    # 1. GỬI REQUEST và nhận Response 401
-    print("[BƯỚC 1] Gửi GET / (app1.local) và nhận Response 401...")
-    status, _, response_text = send_http_request(proxy_ip, proxy_port, 'GET', '/', proxy_host=TARGET_HOST_APP1)
+    # --- BƯỚC 1: REQUEST LẦN 1 - GET / (Kiểm tra 401) ---
+    print(f"\n[BƯỚC 1] Gửi GET / (Không Cookie) tới {TARGET_HOST_APP1}...")
+    status, _, headers, body_bytes = send_http_request(proxy_ip, proxy_port, 'GET', '/', proxy_host=TARGET_HOST_APP1)
     
-    # 🔑 KIỂM TRA: Liên kết phải là URL tuyệt đối
-    expected_link = f'href="http://{TARGET_HOST_APP2}:{proxy_port}/login.html"'
-    ui_url = f""
-    print(status)
-    if int(status) == 404:
-        ui_url = f"http://{DEFAULT_BACKEND_IP}:{DEFAULT_BACKEND_PORT}/unauthorize.html"
-        webbrowser.open_new_tab(ui_url) 
-    elif int(status) == 200:
-        ui_url = f"http://{DEFAULT_BACKEND_IP}:{DEFAULT_BACKEND_PORT}/index.html"
-        webbrowser.open_new_tab(ui_url) 
-    print(f"\n[BƯỚC 2] MỞ GIAO DIỆN UI")
-    print(f"  🟢 Mở trình duyệt tại địa chỉ: {ui_url}")
+    if status != '401':
+        print(f"  ❌ LỖI: Kỳ vọng 401 Unauthorized, nhận được {status}. Kiểm tra lại Server.")
+        if status == '200':
+             print("  (Có thể do Server chưa có logic chuyển hướng/bảo vệ trang /)")
+        return
+    print(f"  ✅ Nhận Response {status} (Unauthorized). Tiếp tục.")
+
+    # --- BƯỚC 2: "RENDER" VÀ TƯƠNG TÁC (Tạo POST Request) ---
+    print("\n[BƯỚC 2] 'Render' Body HTML và Mô phỏng Tương tác UI...")
     
+    form_action, login_payload = console_render_html(body_bytes)
     
+    if not login_payload:
+        print("  ❌ Dừng kịch bản: Không thể mô phỏng tương tác Form.")
+        return
+
+    # --- BƯỚC 3: REQUEST LẦN 2 - POST /login (Xác thực và lấy Cookie) ---
+    print(f"\n[BƯỚC 3] Gửi POST {form_action} với dữ liệu đã mô phỏng...")
+    status_post, header_text_post, headers_post, _ = send_http_request(
+        proxy_ip, proxy_port, 
+        'POST', form_action, 
+        body=login_payload,
+        proxy_host=TARGET_HOST_APP1
+    )
     
-    print("\n[HOÀN TẤT KIỂM TRA TỰ ĐỘNG]")
-    print("--------------------------------------------------")
+    set_cookie_header = headers_post.get('set-cookie', '')
+    
+    print(f"  -> Trạng thái POST: {status_post}")
+    if status_post == '200' and 'auth=true' in set_cookie_header:
+        print("  ✅ Xác thực thành công.")
+        print(f"  -> Header Set-Cookie: {set_cookie_header.split(';')[0] + '...'}")
+    else:
+        print(f"  ❌ LỖI: POST thất bại (Status: {status_post} hoặc thiếu Cookie).")
+        return
+        
+    # --- BƯỚC 4: REQUEST LẦN 3 - GET / (Kiểm tra Cookie) ---
+    
+    # Trích xuất Cookie string (chỉ lấy auth=true)
+    cookie_value = set_cookie_header.split(';')[0]
+    
+    print(f"\n[BƯỚC 4] Gửi GET / LẠI với Cookie: {cookie_value}...")
+    
+    headers_with_cookie = {"Cookie": cookie_value}
+    status_cookie, _, _, _ = send_http_request(
+        proxy_ip, proxy_port, 'GET', '/', 
+        headers=headers_with_cookie, 
+        proxy_host=TARGET_HOST_APP1
+    )
+    
+    if status_cookie == '200':
+        print(f"  ✅ Nhận Response {status_cookie} với Cookie. TASK 1B (Access Control) thành công.")
+    else:
+        print(f"  ❌ LỖI: Nhận Response {status_cookie} dù đã gửi Cookie hợp lệ.")
+
+    print("\n==================================================")
+    print("[HOÀN TẤT KỊCH BẢN KIỂM TRA TỰ ĐỘNG]")
+    print("==================================================")
 
 # =======================================================
 # III. HÀM MAIN
@@ -102,7 +203,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(
         prog='run_client_scenario', 
-        description='Chạy kịch bản kiểm thử client (chỉ kiểm tra Server-side modification).',
+        description='Mô phỏng Browser để kiểm tra Assignment 1 (HTTP Server và Session Cookie).',
     )
     parser.add_argument('--proxy-ip', default=DEFAULT_PROXY_IP, help='Địa chỉ IP của Proxy Server.')
     parser.add_argument('--proxy-port', type=int, default=DEFAULT_PROXY_PORT, help='Cổng của Proxy Server.')
