@@ -118,8 +118,6 @@ class Response():
         #: is a response.
         self.request = None
 
-        self.body = b""
-
 
     def get_mime_type(self, path):
         """
@@ -204,7 +202,7 @@ class Response():
 
         :rtype tuple: (int, bytes) representing content length and content data.
         """
-        
+
         filepath = os.path.join(base_dir, path.lstrip('/'))
         print("[Response] serving the object at location {}".format(filepath))
         
@@ -249,52 +247,55 @@ class Response():
 
         # Build dynamic headers
         headers = {
-            "Accept": "{}".format(reqhdr.get("Accept", "application/json")),
-            "Accept-Language": "{}".format(reqhdr.get("Accept-Language", "en-US,en;q=0.9")),
-            "Authorization": "{}".format(reqhdr.get("Authorization", False)),
-            "Cache-Control": "no-cache",
             "Content-Type": "{}".format(rsphdr.get("Content-Type", "text/html")),
             "Content-Length": "{}".format(len(self._content)),
-            # "Cookie": "{}".format(reqhdr.get("Cookie", "sessionid=xyz789")),
             "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
-            "Max-Forward": "10",
-            "Pragma": "no-cache",
-            "Proxy-Authorization": "Basic dXNlcjpwYXNz",  # example base64
-            "Warning": "199 Miscellaneous warning",
-            "User-Agent": "{}".format(reqhdr.get("User-Agent", "Chrome/123.0.0.0")),
+            "Server": "WeApRous/1.0",
             "Connection": "{}".format(rsphdr.get("Connection", "close")),
+            "Cache-Control": "no-cache",
         }
+
+        # Add optional headers from request if present
+        if reqhdr.get("accept"):
+            headers["Accept"] = reqhdr.get("accept")
+        if reqhdr.get("accept-language"):
+            headers["Accept-Language"] = reqhdr.get("accept-language")
 
         #
         # TODO prepare the request authentication
         #
-        self.auth = reqhdr.get("authorization")
-        if self.auth is False:
-            c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")
-            headers["Content-Length"] = "{}".format(len(self._content))
+        auth_header = reqhdr.get("authorization")
+        if auth_header:
+            self.auth = auth_header
+            headers["Authorization"] = auth_header
+        else:
+            self.auth = None
 
-        status_line = "HTTP/1.1 {} {}\r\n".format(
-            self.status_code if self.status_code else 200,
-            self.reason if self.reason else "OK"
-        )
+        status_code = self.status_code if self.status_code else 200
+        reason = self.reason if self.reason else "OK"
+        fmt_header = "HTTP/1.1 {} {}\r\n".format(status_code, reason)
 
         # Header text alignment
         #
         #  TODO: implement the header building to create formated
         #        header from the provied headers
         #
-        fmt_header = status_line
         for key, value in headers.items():
-            fmt_header += "{}: {}\r\n".format(key, value)
+            if value and str(value).strip():
+                fmt_header += "{}: {}\r\n".format(key, value)
 
         if hasattr(self, "cookies") and self.cookies:
             for ck, cv in self.cookies.items():
                 fmt_header += "Set-Cookie: {}={}; Path=/\r\n".format(ck, cv)
-        if 'Set-Cookie' in reqhdr.keys():
-            fmt_header += "Set-Cookie: {}\r\n".format(reqhdr['Set-Cookie'])
+        
+        # Fallback for manual Set-Cookie
+        if "Set-Cookie" in rsphdr:
+            fmt_header += "Set-Cookie: {}\r\n".format(rsphdr["Set-Cookie"])
 
+        # End headers
         fmt_header += "\r\n"
-        return str(fmt_header).encode('utf-8')
+        
+        return fmt_header.encode('utf-8')
 
 
 
@@ -327,8 +328,6 @@ class Response():
         """
 
         path = request.path
-        if path == "/":
-            path = "/index.html"
 
         mime_type = self.get_mime_type(path)
         print("[Response] {} path {} mime_type {}".format(request.method, request.path, mime_type))
