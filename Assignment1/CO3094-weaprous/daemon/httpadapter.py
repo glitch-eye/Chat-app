@@ -118,242 +118,66 @@ class HttpAdapter:
         return params
 
     def handle_client(self, conn, addr, routes):
-        """
-        Handle incoming client connection with authentication and chat APIs.
-        """
-        import time
-        
-        # Initialize tracker storage
-        if not hasattr(self.__class__, 'TRACKER'):
-            self.__class__.TRACKER = {"peers": {}}
-        
-        self.conn = conn
-        self.connaddr = addr
-        req = self.request
-        resp = self.response
-        
+        self.conn, self.connaddr = conn, addr
+        req, resp = self.request, self.response
         try:
             msg = conn.recv(4096).decode('utf-8')
-            if not msg:
-                conn.close()
-                return
-            
+            if not msg: conn.close(); return
+
             req.prepare(msg, routes)
-            cookies = self.extract_cookies(req)
-            
-            def get_body():
-                body_start = msg.find('\r\n\r\n')
-                return msg[body_start + 4:] if body_start != -1 else ""
-            
-            def parse_form(text):
-                result = {}
-                for pair in text.split('&'):
-                    if '=' in pair:
-                        k, v = pair.split('=', 1)
-                        result[k] = v
-                return result
-            
-            print("[HttpAdapter] {} {} from {}".format(req.method, req.path, addr))
-            print("[HttpAdapter] Cookies: {}".format(cookies))
-            
+
+            # reset response state
+            resp.headers.clear(); resp.cookies.clear()
+            resp.status_code = 200; resp.reason = "OK"; resp._content = b""
+
+            if not getattr(req, 'method', None) or not getattr(req, 'path', None):
+                conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n"); conn.close(); return
+
+            # extract
+            cookies = self.extract_cookies  
+            body = getattr(req, 'body', b'') or b''
+            form_data = self.parse_form_data(body)
+
             path = req.path
-            if len(path) > 1 and path.endswith('/'):
-                path = path[:-1]
-            
-            # TASK 1A: POST /login
-            if req.method == 'POST' and path == '/login':
-                req.body = get_body()
-                form_data = parse_form(req.body)
-                username = form_data.get('username', '')
-                password = form_data.get('password', '')
-                
-                print("[HttpAdapter] Login attempt: username={}".format(username))
-                
-                if username == 'admin' and password == 'password':
-                    print("[HttpAdapter] [OK] Login successful - setting auth cookie")  # ← Fixed
-                    resp.status_code = 200
-                    resp.reason = "OK"
-                    resp.cookies['auth'] = 'true'
-                    
-                    c_len, resp._content = resp.build_content('/index.html', 'www')
-                    resp.headers['Content-Type'] = 'text/html'
-                    resp.headers['Content-Length'] = str(c_len)
-                else:
-                    print("[HttpAdapter] [FAIL] Login failed - invalid credentials")  # ← Fixed
-                    resp.status_code = 401
-                    resp.reason = "Unauthorized"
-                    
-                    c_len, resp._content = resp.build_content('/401.html', 'www')
-                    resp.headers['Content-Type'] = 'text/html'
-                    resp.headers['Content-Length'] = str(c_len)
-                
-                response_bytes = resp.build_response_header(req) + resp._content
-            
-            # TASK 1B: GET /
-            elif req.method == 'GET' and (path == '/' or path == '/index.html' or path == '/index'):
-                if cookies.get('auth') == 'true':
-                    print("[HttpAdapter] [AUTH] Authenticated user accessing /")  # ← Fixed
-                    resp.status_code = 200
-                    resp.reason = "OK"
-                    
-                    c_len, resp._content = resp.build_content('/index.html', 'www')
-                    resp.headers['Content-Type'] = 'text/html'
-                    resp.headers['Content-Length'] = str(c_len)
-                else:
-                    print("[HttpAdapter] [NOAUTH] Unauthenticated - returning 401")  # ← Fixed
-                    resp.status_code = 401
-                    resp.reason = "Unauthorized"
-                    
-                    c_len, resp._content = resp.build_content('/401.html', 'www')
-                    resp.headers['Content-Type'] = 'text/html'
-                    resp.headers['Content-Length'] = str(c_len)
-                
-                response_bytes = resp.build_response_header(req) + resp._content
-            
-            # TASK 2: POST /submit-info
-            elif req.method == 'POST' and path == '/submit-info':
-                req.body = get_body()
-                form_data = parse_form(req.body)
-                
-                peer_ip = form_data.get('ip', '')
-                peer_port = form_data.get('port', '')
-                peer_nick = form_data.get('nick', '')
-                
-                if peer_ip and peer_port:
-                    key = "{}:{}".format(peer_ip, peer_port)
-                    self.__class__.TRACKER["peers"][key] = {
-                        "ip": peer_ip,
-                        "port": int(peer_port),
-                        "nick": peer_nick,
-                        "last_seen": time.time()
-                    }
-                    print("[HttpAdapter] [REGISTER] Peer registered: {}".format(key))  # ← Fixed
-                
-                resp.status_code = 200
-                resp.reason = "OK"
-                resp.headers['Content-Type'] = 'application/json'
-                resp._content = b'{"status":"ok"}'
-                resp.headers['Content-Length'] = str(len(resp._content))
-                response_bytes = resp.build_response_header(req) + resp._content
-            
-            # TASK 2: GET /get-list
-            elif req.method == 'GET' and path == '/get-list':
-                now = time.time()
-                active_peers = [
-                    p for p in self.__class__.TRACKER["peers"].values()
-                    if now - p["last_seen"] < 60
-                ]
-                
-                peer_list = []
-                for p in active_peers:
-                    peer_list.append(
-                        '{{"ip":"{}","port":{},"nick":"{}"}}'.format(
-                            p["ip"], p["port"], p.get("nick", "")
-                        )
-                    )
-                
-                body = ('{"peers":[' + ",".join(peer_list) + "]}").encode('utf-8')
-                
-                resp.status_code = 200
-                resp.reason = "OK"
-                resp.headers['Content-Type'] = 'application/json'
-                resp._content = body
-                resp.headers['Content-Length'] = str(len(resp._content))
-                
-                print("[HttpAdapter] [LIST] Returned {} active peers".format(len(active_peers)))  # ← Fixed
-                response_bytes = resp.build_response_header(req) + resp._content
-            
-            # TASK 2: POST /add-list
-            elif req.method == 'POST' and path == '/add-list':
-                req.body = get_body()
-                form_data = parse_form(req.body)
-                
-                added = 0
-                peers_str = form_data.get('peers', '')
-                
-                if peers_str:
-                    for item in peers_str.split(','):
-                        parts = item.split(':')
-                        if len(parts) >= 2:
-                            ip, port = parts[0], parts[1]
-                            nick = parts[2] if len(parts) >= 3 else ''
-                            key = "{}:{}".format(ip, port)
-                            
-                            self.__class__.TRACKER["peers"][key] = {
-                                "ip": ip,
-                                "port": int(port),
-                                "nick": nick,
-                                "last_seen": time.time()
-                            }
-                            added += 1
-                
-                resp.status_code = 200
-                resp.reason = "OK"
-                resp.headers['Content-Type'] = 'application/json'
-                resp._content = '{{"status":"ok","added":{}}}'.format(added).encode('utf-8')
-                resp.headers['Content-Length'] = str(len(resp._content))
-                
-                print("[HttpAdapter] [ADD] Added {} peers".format(added))  # ← Fixed
-                response_bytes = resp.build_response_header(req) + resp._content
-            
-            # TASK 2: Hook Handler
-            elif req.hook:
-                print("[HttpAdapter] [HOOK] Hook for {} {}".format(  # ← Fixed
-                    req.hook._route_methods, req.hook._route_path))
-                
-                req.body = get_body()
-                
-                try:
-                    result = req.hook(headers=req.headers, body=req.body)
-                    
-                    if result:
-                        resp.status_code = 200
-                        resp.reason = "OK"
-                        
-                        if isinstance(result, str):
-                            resp._content = result.encode('utf-8')
-                        elif isinstance(result, bytes):
-                            resp._content = result
-                        else:
-                            resp._content = str(result).encode('utf-8')
-                        
-                        resp.headers['Content-Type'] = 'application/json'
-                        resp.headers['Content-Length'] = str(len(resp._content))
-                        response_bytes = resp.build_response_header(req) + resp._content
-                    else:
-                        response_bytes = resp.build_response(req)
-                
-                except Exception as e:
-                    print("[HttpAdapter] [ERROR] Hook error: {}".format(e))  # ← Fixed
-                    import traceback
-                    traceback.print_exc()
-                    
-                    resp.status_code = 500
-                    resp.reason = "Internal Server Error"
-                    resp._content = b"Internal Server Error"
-                    resp.headers['Content-Type'] = 'text/plain'
-                    resp.headers['Content-Length'] = str(len(resp._content))
+            if len(path) > 1 and path.endswith('/'): path = path[:-1]
+            path = path.split('?', 1)[0]
+            method = req.method
+
+            # find hook
+            hook = req.hook or (routes.get((method, path)) if routes else None)
+
+            if hook:
+                result = hook(method=method, path=path, headers=req.headers,
+                            cookies=cookies, body=body, form_data=form_data)
+
+                if isinstance(result, dict):
+                    resp.status_code = result.get('status', 200)
+                    resp.reason = result.get('reason', 'OK')
+
+                    for k, v in result.get('headers', {}).items(): resp.headers[k] = v
+                    for k, v in result.get('cookies', {}).items(): resp.cookies[k] = v
+
+                    content = result.get('body', b'')
+                    resp._content = content.encode('utf-8') if isinstance(content, str) else \
+                                    (content if isinstance(content, bytes) else str(content).encode('utf-8'))
+
+                    if 'Content-Type' not in resp.headers:
+                        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+
                     response_bytes = resp.build_response_header(req) + resp._content
-            
-            # Normal file serving
+                else:
+                    response_bytes = resp.build_response(req)
             else:
-                print("[HttpAdapter] [FILE] File serving: {}".format(req.path))  # ← Fixed
                 response_bytes = resp.build_response(req)
-            
+
             conn.sendall(response_bytes)
-        
-        except Exception as e:
-            print("[HttpAdapter] [ERROR] Error: {}".format(e))  # ← Fixed
-            import traceback
-            traceback.print_exc()
-            
-            try:
-                conn.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\nError")
-            except:
-                pass
-        
+        except Exception:
+            try: conn.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\nInternal Server Error")
+            except: pass
         finally:
-            conn.close()
+            try: conn.close()
+            except: pass
+
 
     def add_headers(self, request):
         """
