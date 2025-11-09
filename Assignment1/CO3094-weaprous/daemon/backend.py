@@ -48,6 +48,16 @@ from .response import *
 from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
 
+CHANNEL_STORE = {
+    'global_chat': set() 
+}
+SESSION_STORE = {}
+"""
+Key: session_id (UUID)\n
+Value: {'username': str, 'ip': str, 'p2p_port': int, 'status': str, 'channels': list}\n
+"""
+STATE_LOCK = threading.Lock()
+
 def handle_client(ip, port, conn, addr, routes):
     """
     Initializes an HttpAdapter instance and delegates the client handling logic to it.
@@ -105,5 +115,4 @@ def create_backend(ip, port, routes={}):
     :param port (int): Port number to listen on.
     :param routes (dict, optional): Dictionary of route handlers. Defaults to empty dict.
     """
-
     run_backend(ip, port, routes)

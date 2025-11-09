@@ -23,34 +23,95 @@ It defines basic route handlers and launches a TCP-based backend server to serve
 HTTP requests. The application includes a login endpoint and a greeting endpoint,
 and can be configured via command-line arguments.
 """
-
+import os
 import json
 import socket
+import sys
 import threading # Cần thiết cho cơ chế Lock
 import argparse
 import uuid # Cần thiết để tạo ID duy nhất
-
+from daemon.backend import SESSION_STORE, CHANNEL_STORE, STATE_LOCK
 from daemon.weaprous import WeApRous
 from daemon.httpadapter import HttpAdapter, parse_body_params
+from http.server import BaseHTTPRequestHandler, HTTPServer # Dùng cho mô phỏng Server
+from urllib.parse import urlparse, parse_qs
 
 # 🟢 Khóa (Lock) để đảm bảo an toàn khi cập nhật trạng thái chung
-STATE_LOCK = threading.Lock()
-PORT = 8000  # Default port
 
-CHANNEL_STORE = {
-    'global_chat': set() 
-}
+PORT = 8000  # Default port
 
 app = WeApRous()
 
+PROXY_HOST_URL = "http://app2.local:8080"
+BASE_DIR_FOR_HTML = "www"
 
-SESSION_STORE = {}
-"""
-Key: session_id (UUID)\n
-Value: {'username': str, 'ip': str, 'p2p_port': int, 'status': str, 'channels': list}\n
-"""
+def get_base_dir():
+    """Lấy thư mục gốc (nơi script này đang chạy)"""
+    return os.path.dirname(os.path.abspath(__file__))
 
+# -------------------------------------------------------
+# LOGIC TẢI VÀ SỬA ĐỔI (CHỈ CHẠY MỘT LẦN KHI STARTUP)
+# -------------------------------------------------------
+
+def _load_page_content(filename):
+    """Đọc nội dung file HTML từ thư mục www."""
+    filepath = os.path.join(get_base_dir(), BASE_DIR_FOR_HTML, filename)
+    try:
+        with open(filepath, 'rb') as f:
+            content = f.read()
+            return content
+    except FileNotFoundError:
+        print(f"[ERROR] File www/{filename} không tìm thấy.")
+        return None
+    except Exception as e:
+        return None
+
+def load_and_modify_html(filename, serverurl):
+    """Tải nội dung và sửa đổi liên kết chuyển hướng."""
+    content_bytes = _load_page_content(filename)
+    
+    if content_bytes is None:
+        return b"<h1>Error: Content not loaded. Check server logs.</h1>"
+    
+    # Chuyển đổi sang string để thao tác chuỗi
+    original_content_str = content_bytes.decode('utf-8')
+    
+    # 🔑 THAO TÁC GHÉP CHUỖI VÀ SỬA LỖI CHUYỂN HƯỚNG
+    modified_content_str = original_content_str.replace(
+        'href="login.html"',
+        f'href="{serverurl}/login.html"'
+    )
+    
+    # Trả về dưới dạng bytes để gán trực tiếp vào response.body
+    return modified_content_str.encode('utf-8')
 # Trong start_sampleapp.py (Sau các định nghĩa STORE)
+
+INDEX_PAGE = _load_page_content("index.html")
+LOGIN_PAGE = _load_page_content("login.html")
+UNAUTHORIZED_PAGE = _load_page_content("unauthorize.html")
+
+class BackendHandler(BaseHTTPRequestHandler):
+    """Handler mô phỏng chạy app.route"""
+    def do_GET(self): 
+        global INDEX_PAGE
+        global UNAUTHORIZED_PAGE
+        global LOGIN_PAGE
+        if self.path == '/index.html':
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(INDEX_PAGE)
+        elif self.path == '/login.html':
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(LOGIN_PAGE)
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(UNAUTHORIZED_PAGE)
+            print(UNAUTHORIZED_PAGE)
+
+
 
 def check_authentication(request, response, adapter):
     """Kiểm tra session_id trong Cookie và trả về username."""
@@ -120,6 +181,9 @@ def login_route(request, response, adapter):
         session_cookie = f"sessionid={session_id}" 
         # response.headers['Set-Cookie'] = session_cookie
         request.prepare_cookies(session_cookie)
+        response.status_code = 200
+        response.reason = "OK"
+        request.headers["authorization"] = True
         
         print(f"[AUTH] User {username} logged in. Session ID: {session_id}")
     else:
@@ -334,4 +398,14 @@ if __name__ == "__main__":
 
     # Prepare and launch the RESTful application
     app.prepare_address(ip, port)
+    INDEX_PAGE = load_and_modify_html("index.html",f"http://{ip}:{port}")
+    LOGIN_PAGE = load_and_modify_html("login.html", f"http://{ip}:{port}")
+    UNAUTHORIZED_PAGE = load_and_modify_html("unauthorize.html", f"http://{ip}:{port}")    
+    print(f"[{os.getpid()}] Backend Server running at http://{ip}:{port}")
+    server = HTTPServer((ip, port), BackendHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.server_close()
+        sys.exit(0)
     app.run()
