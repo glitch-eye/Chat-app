@@ -25,6 +25,7 @@ import os
 import mimetypes
 from .dictionary import CaseInsensitiveDict
 
+
 BASE_DIR = ""
 
 class Response():   
@@ -118,7 +119,11 @@ class Response():
         #: is a response.
         self.request = None
 
+        self._content_loaded = False
 
+    def setbody(self, body):
+        self._content = body
+        self._content_loaded = True
     def get_mime_type(self, path):
         """
         Determines the MIME type of a file based on its path.
@@ -131,8 +136,8 @@ class Response():
         try:
             mime_type, _ = mimetypes.guess_type(path)
         except Exception:
-            return 'application/octet-stream'
-        return mime_type or 'application/octet-stream'
+            return 'text/html'
+        return mime_type or 'text/html'
 
 
     def prepare_content_type(self, mime_type='text/html'):
@@ -206,6 +211,10 @@ class Response():
             filepath = os.path.join("www/", "/login.html".lstrip('/'))
         elif path == "/submit-info/" :
             filepath = os.path.join("www/", "/submit-info.html".lstrip('/'))
+        elif path == "/add-list/" :
+            filepath = os.path.join("www/", "/add-list.html".lstrip('/'))
+        elif path == "/get-list/" :
+            filepath = os.path.join("www/", "/get-list.html".lstrip('/'))
         else:
             filepath = os.path.join(base_dir, path.lstrip('/'))
         
@@ -252,7 +261,7 @@ class Response():
 
         # Build dynamic headers
         headers = {
-            "Content-Type": "{}".format(rsphdr.get("Content-Type", "text/html")),
+            "Content-Type": "{}".format(rsphdr.get("Content-Type", "text/html; charset=utf-8")),
             "Content-Length": "{}".format(len(self._content)),
             "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
             "Server": "WeApRous/1.0",
@@ -281,7 +290,7 @@ class Response():
                 c_len, self._content = self.build_content("/submit-info.html", BASE_DIR + "www/")
                 headers["Content-Length"] = "{}".format(len(self._content))
             elif request.path == "/submit-info/" and request.method == "POST":
-                c_len, self._content = self.build_content("/index.html", BASE_DIR + "www/")
+                c_len, self._content = self.build_content("/add-list.html", BASE_DIR + "www/")
                 headers["Content-Length"] = "{}".format(len(self._content))
         else:
             c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")
@@ -343,7 +352,6 @@ class Response():
 
         :rtype bytes: complete HTTP response using prepared headers and content.
         """
-
         path = request.path
 
         mime_type = self.get_mime_type(path)
@@ -369,7 +377,9 @@ class Response():
             base_dir = self.prepare_content_type(mime_type=mime_type)
         else:
             return self.build_notfound()
-
+        if self._content_loaded:
+            self._header = self.build_response_header(request)
+            return self._header + self._content
         c_len, self._content = self.build_content(path, base_dir)
         self._header = self.build_response_header(request)
         return self._header + self._content

@@ -166,7 +166,8 @@ def handle_client(ip, port, conn, addr, routes):
     print(request)
     for line in request.splitlines():
         if line.lower().startswith('host:'):
-            hostname = line.split(':', 1)[1].strip()
+            raw_host = line.split(':')[1].strip()
+            hostname = raw_host.split(':')[0]
             break
     print("[Proxy] {} at Host: {}".format(addr, hostname))
 

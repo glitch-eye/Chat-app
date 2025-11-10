@@ -19,6 +19,7 @@ This module provides a WeApRous object to deploy RESTful url web app with routin
 
 from .backend import create_backend
 
+
 class WeApRous:
     """The fully mutable :class:`WeApRous <WeApRous>` object, which is a lightweight,
     mutable web application router for deploying RESTful URL endpoints.
