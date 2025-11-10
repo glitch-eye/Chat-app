@@ -48,6 +48,16 @@ from .response import *
 from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
 
+CHANNEL_STORE = {
+    'global_chat': set() 
+}
+SESSION_STORE = {}
+"""
+Key: session_id (UUID)\n
+Value: {'username': str, 'ip': str, 'p2p_port': int, 'status': str, 'channels': list}\n
+"""
+STATE_LOCK = threading.Lock()
+
 def handle_client(ip, port, conn, addr, routes):
     """
     Initializes an HttpAdapter instance and delegates the client handling logic to it.
@@ -61,7 +71,11 @@ def handle_client(ip, port, conn, addr, routes):
     daemon = HttpAdapter(ip, port, conn, addr, routes)
 
     # Handle client
-    daemon.handle_client(conn, addr, routes)
+    sessionid = daemon.handle_client(conn, addr, routes)
+    if sessionid is not None:
+        with STATE_LOCK:
+            SESSION_STORE[sessionid]["ip"] = addr[0]
+            SESSION_STORE[sessionid]["p2p_port"] = addr[0]
 
 def run_backend(ip, port, routes):
     """

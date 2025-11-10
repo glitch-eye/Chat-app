@@ -33,6 +33,7 @@ from daemon.backend import SESSION_STORE, CHANNEL_STORE, STATE_LOCK
 from daemon.weaprous import WeApRous
 from daemon.httpadapter import HttpAdapter, parse_body_params
 from urllib.parse import urlparse, parse_qs
+from daemon import *
 
 # 🟢 Khóa (Lock) để đảm bảo an toàn khi cập nhật trạng thái chung
 
@@ -91,14 +92,13 @@ UNAUTHORIZED_PAGE = _load_page_content("unauthorize.html")
 
 def check_authentication(request, response, adapter):
     """Kiểm tra session_id trong Cookie và trả về username."""
-    cookies = request.headers.get("Set-Cookie")
-    if cookies is None:
+    cookies = request.headers.get("cookies", "")
+    if cookies == "":
         response.status_code = 401
         response.reason = "Unauthorized"
         request.headers["authorization"] = False
         return None
-    session_id = cookies.get('session_id')
-
+    session_id = cookies.split("=",1)[1]
     if session_id is None:
         response.status_code = 401
         response.reason = "Unauthorized"
@@ -108,6 +108,7 @@ def check_authentication(request, response, adapter):
     with STATE_LOCK:
         user_session = SESSION_STORE.get(session_id)
 
+    print
     if not user_session:
         response.status_code = 401
         response.reason = "Unauthorized"
@@ -116,7 +117,6 @@ def check_authentication(request, response, adapter):
     response.status_code = 200
     response.reason = "OK"
     request.headers["authorization"] = True
-
     return user_session['username']
 
 @app.route('/', methods=['GET'])
@@ -126,7 +126,10 @@ def home_route(request, response, adapter):
     """
     print("-------------------------------------")
     check_authentication(request, response, adapter)
-        
+@app.route('/login', methods=['GET'])
+def login_route(request, response, adapter):
+    response.status_code = 200
+    response.reason = "OK"
 
 
 @app.route('/login', methods=['POST'])
@@ -157,6 +160,7 @@ def login_route(request, response, adapter):
         session_cookie = f"sessionid={session_id}" 
         # response.headers['Set-Cookie'] = session_cookie
         request.prepare_cookies(session_cookie)
+        response.headers["Set-Cookie"] = session_cookie
         response.status_code = 200
         response.reason = "OK"
         request.headers["authorization"] = True
@@ -167,6 +171,12 @@ def login_route(request, response, adapter):
         response.reason = "Unauthorized"
         request.headers["authorization"] = False
 
+@app.route('/submit-info', methods=['GET'])
+def submit_info_route(request, response, adapter):
+    """
+    Peer Registration: Cập nhật IP và P2P Port của Peer vào Tracker.
+    """
+    
 @app.route('/submit-info', methods=['POST'])
 def submit_info_route(request, response, adapter):
     """
