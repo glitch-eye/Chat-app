@@ -23,13 +23,10 @@ It defines basic route handlers and launches a TCP-based backend server to serve
 HTTP requests. The application includes a login endpoint and a greeting endpoint,
 and can be configured via command-line arguments.
 """
-import os
+
 import json
-import socket
-import threading # Cần thiết cho cơ chế Lock
+import time
 import argparse
-import uuid # Cần thiết để tạo ID duy nhất
-from daemon.backend import SESSION_STORE, CHANNEL_STORE, STATE_LOCK
 from daemon.weaprous import WeApRous
 from daemon.httpadapter import HttpAdapter, parse_body_params
 from urllib.parse import urlparse, parse_qs
@@ -38,6 +35,7 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = 8000  # Default port
 
+PORT = 8000
 app = WeApRous()
 
 PROXY_HOST_URL = "http://app1.local:8080"
@@ -202,17 +200,14 @@ def login_route(request, response, adapter):
     response.reason = "OK"
     request.headers["authorization"] = True
 
+def _require_auth(cookies):
+    return cookies and cookies.get('auth') == 'true'
 
+# ===== Task 1A: POST /login =====
 @app.route('/login', methods=['POST'])
-def login_route(request, response, adapter):
-    """
-    TASK 1A (Mới): Xử lý POST /login (Tạo và Gửi Session ID)
-    """
-    body_params = parse_body_params(request.body)
-    username = body_params.get('username')
-    password = body_params.get('password')
-    
-    # Kiểm tra mật khẩu (Dummy check)
+def login(method=None, path=None, headers=None, cookies=None, body=None, form_data=None, **_):
+    username = (form_data or {}).get('username', '')
+    password = (form_data or {}).get('password', '')
     if username == 'admin' and password == 'password':
         
         # 1. 🟢 TẠO Session ID MỚI VÀ DUY NHẤT
@@ -242,15 +237,18 @@ def login_route(request, response, adapter):
         response.reason = "Unauthorized"
         request.headers["authorization"] = False
 
-@app.route('/submit-info', methods=['GET'])
-def submit_info_route(request, response, adapter):
-    """
-    Peer Registration: Cập nhật IP và P2P Port của Peer vào Tracker.
-    """
-    response.status_code = 200
-    response.reason = "OK"
-    request.headers["authorization"] = True
-    
+# ===== Task 1B: GET / =====
+@app.route('/', methods=['GET'])
+@app.route('/index', methods=['GET'])
+@app.route('/index.html', methods=['GET'])
+def index(method=None, path=None, headers=None, cookies=None, **_):
+    if _require_auth(cookies):
+        html = _load_html('index.html', b'<h1>Welcome</h1>')
+        return _html(html, status=200)
+    html = _load_html('401.html', b'<h1>401 Unauthorized</h1>')
+    return _html(html, status=401)
+
+# ===== Task 2: POST /submit-info =====
 @app.route('/submit-info', methods=['POST'])
 def submit_info_route(request, response, adapter):
     """
@@ -380,50 +378,31 @@ def connect_peer_route(request, response, adapter):
 # =========================================================
 
 @app.route('/broadcast-peer', methods=['POST'])
-def broadcast_peer_route(request, response, adapter):
-    """Dummy Route: Thông báo Server rằng Client đang broadcast (P2P)."""
-    if check_authentication(request, response, adapter) is None:
-        return
-    
-    response.status_code = 200
-    response.body = b'{"status": "P2P Broadcast Acknowledged by Control Plane"}'
-    response.headers['Content-Type'] = 'application/json'
+def broadcast_peer(method=None, path=None, headers=None, cookies=None, **_):
+    return _json({"status": "ok", "message": "Broadcast acknowledged"})
 
+# ===== Task 2: POST /send-peer (ack) =====
 @app.route('/send-peer', methods=['POST'])
-def send_peer_route(request, response, adapter):
-    """Dummy Route: Thông báo Server rằng Client đang gửi tin nhắn trực tiếp (P2P)."""
-    if check_authentication(request, response, adapter) is None:
-        return
-    
-    response.status_code = 200
-    response.body = b'{"status": "P2P Direct Send Acknowledged by Control Plane"}'
-    response.headers['Content-Type'] = 'application/json'
+def send_peer(method=None, path=None, headers=None, cookies=None, **_):
+    return _json({"status": "ok", "message": "Direct send acknowledged"})
 
-@app.route('/hello', methods=['PUT'])
-def hello(headers, body):
-    """
-    Handle greeting via PUT request.
-
-    This route prints a greeting message to the console using the provided headers
-    and body.
-
-    :param headers (str): The request headers or user identifier.
-    :param body (str): The request body or message payload.
-    """
-    print ("[SampleApp] ['PUT'] Hello in {} to {}".format(headers, body))
-
+# ===== Optional: /status =====
+@app.route('/status', methods=['GET'])
+def status(method=None, path=None, **_):
+    now = time.time()
+    active_peers = sum(1 for p in PEER_TRACKER.values() if now - p["last_seen"] < PEER_TTL)
+    return _json({
+        "status": "online",
+        "total_peers": len(PEER_TRACKER),
+        "active_peers": active_peers,
+        "channels": len(CHANNEL_STORE),
+        "sessions": len(USER_SESSIONS)
+    })
 
 if __name__ == "__main__":
-    # Parse command-line arguments to configure server IP and port
-    parser = argparse.ArgumentParser(prog='Backend', description='', epilog='Beckend daemon')
+    parser = argparse.ArgumentParser(prog='SampleApp', description='WeApRous sample app')
     parser.add_argument('--server-ip', default='0.0.0.0')
     parser.add_argument('--server-port', type=int, default=PORT)
- 
     args = parser.parse_args()
-    ip = args.server_ip
-    port = args.server_port
-
-    # Prepare and launch the RESTful application
-    app.prepare_address(ip, port)
-    
+    app.prepare_address(args.server_ip, args.server_port)
     app.run()
