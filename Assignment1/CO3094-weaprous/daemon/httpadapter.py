@@ -19,11 +19,39 @@ http settings (headers, bodies). The adapter supports both
 raw URL paths and RESTful route definitions, and integrates with
 Request and Response objects to handle client-server communication.
 """
+import os
 
 from .request import Request
 from .response import Response
 from .dictionary import CaseInsensitiveDict
+import base64
 
+
+
+def get_base_dir():
+    return os.path.dirname(os.path.abspath(__file__))
+
+# Giữ lại _parse_body_params để các Route Handler có thể gọi
+def parse_body_params(body_bytes):
+    """Phân tích body POST (x-www-form-urlencoded) từ bytes."""
+    params = {}
+    if not body_bytes: return params
+    try:
+        body_str = body_bytes.decode('utf-8')
+        for pair in body_str.split('&'):
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                params[k.strip()] = v.strip() 
+    except:
+        pass
+    return params
+
+def get_encoding_from_headers(headers):
+    """Giả lập hàm tìm kiếm encoding từ Content-Type header."""
+    content_type = headers.get('Content-Type', '')
+    if 'charset=' in content_type:
+        return content_type.split('charset=')[-1].strip()
+    return 'utf-8'
 class HttpAdapter:
     """
     A mutable :class:`HTTP adapter <HTTP adapter>` for managing client connections
@@ -43,6 +71,7 @@ class HttpAdapter:
         request (Request): Request object for parsing incoming data.
         response (Response): Response object for building and sending replies.
     """
+    
 
     __attrs__ = [
         "ip",
@@ -71,7 +100,7 @@ class HttpAdapter:
         self.port = port
         #: Connection
         self.conn = conn
-        #: Connection address
+        #: Conndection address
         self.connaddr = connaddr
         #: Routes
         self.routes = routes
@@ -79,104 +108,167 @@ class HttpAdapter:
         self.request = Request()
         #: Response
         self.response = Response()
+        # 🟢 FIX: Load nội dung trang từ thư mục www khi khởi tạo
+        # self.INDEX_PAGE = self._load_page_content("index.html")
+        # self.LOGIN_PAGE = self._load_page_content("login.html")
+        # self.UNAUTHORIZED_PAGE = self._load_page_content("unauthorize.html")
 
-    def extract_cookies(self, req):
+    def _load_page_content(self, filename):
+        """Đọc nội dung file HTML từ thư mục www."""
+        # FIX: Đường dẫn trỏ đến thư mục www
+        filepath = os.path.join(get_base_dir(), "www", filename)
+        
+        try:
+            with open(filepath, 'rb') as f:
+                content = f.read()
+                return content
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            return None
+       
+    
+    def handle_client(self, conn, addr, routes):
         """
-        Extract cookies from the :class:`Request <Request>` headers.
+        Handle an incoming client connection.
 
-        :param req: (Request) The :class:`Request <Request>` object.
-        :rtype: dict - A dictionary of cookie key-value pairs.
+        This method reads the request from the socket, prepares the request object,
+        invokes the appropriate route handler if available, builds the response,
+        and sends it back to the client.
+
+        :param conn (socket): The client socket connection.
+        :param addr (tuple): The client's address.
+        :param routes (dict): The route mapping for dispatching requests.
+        """
+
+        # Connection handler.
+        self.conn = conn        
+        # Connection address.
+        self.connaddr = addr
+        # Request handler
+        req = self.request
+        # Response handler
+        resp = self.response
+
+        # Handle the request
+        try :
+            msg = conn.recv(1024).decode('utf-8')
+        except UnicodeDecodeError:
+            # Xử lý nếu client gửi dữ liệu không phải utf-8
+            print("[HttpAdapter] Error decoding request.")
+            return
+
+        if not msg:
+            conn.close()
+            return
+        
+        req.prepare(msg, routes)
+
+        resp.status_code = None
+       
+        
+        is_handled = False
+        sessionid = None
+        # 3. 🟢 GỌI HOOK (Route Handler) NẾU TÌM THẤY
+        if req.hook:
+            print("[HttpAdapter] hook in route-path METHOD {} PATH {}".format(req.hook._route_path,req.hook._route_methods))
+            try:
+                # req.hook là hàm handler (ví dụ: home_route, login_route)
+                # Handler sẽ cập nhật trực tiếp resp
+                req.hook(req, resp, self) 
+            except Exception as e:
+                print(f"[Adapter] Error executing handler for {req.url}: {e}")
+                resp.status_code = 500
+                resp.reason = "Internal Server Error"
+            if req.hook._route_path == "/login" and req.hook._route_methods == "POST":
+                if req.cookies is not "":
+                    sessionid = req.cookies.split("=",1)[1]
+
+            is_handled = True
+            
+        
+        response_data = resp.build_response(req)
+        
+
+        #print(response)
+        conn.sendall(response_data)
+        conn.close()
+        return sessionid
+
+    @property
+    # def extract_cookies(self, req, resp):
+    def extract_cookies(self, headers):
+        """
+        Build cookies from the :class:`Request <Request>` headers.
+
+        :param req:(Request) The :class:`Request <Request>` object.
+        :param resp: (Response) The res:class:`Response <Response>` object.
+        :rtype: cookies - A dictionary of cookie key-value pairs.
         """
         cookies = {}
-        
-        # Get Cookie header from request (lowercase key)
-        cookie_header = req.headers.get('cookie', '')
-        
-        if cookie_header:
-            # Parse cookie string: "key1=value1; key2=value2"
-            for pair in cookie_header.split(";"):
-                pair = pair.strip()
-                if '=' in pair:
-                    key, value = pair.split("=", 1)
-                    cookies[key.strip()] = value.strip()
-        
+        for header in headers:
+            if header.startswith("Cookie:"):
+                cookie_str = header.split(":", 1)[1].strip()
+                for pair in cookie_str.split(";"):
+                    key, value = pair.strip().split("=")
+                    cookies[key] = value
         return cookies
 
-    def parse_post_body(self, body):
+    def build_response(self, req, resp = None):
+        """Builds a :class:`Response <Response>` object 
+
+        :param req: The :class:`Request <Request>` used to generate the response.
+        :param resp: The  response object.
+        :rtype: Response
         """
-        Parse POST request body (application/x-www-form-urlencoded).
-        
-        :param body: (str) The request body.
-        :rtype: dict - Dictionary of form parameters.
-        """
-        params = {}
-        if body:
-            for pair in body.split("&"):
-                if '=' in pair:
-                    key, value = pair.split("=", 1)
-                    params[key] = value
-        return params
+        response = Response()
 
-    def handle_client(self, conn, addr, routes):
-        self.conn, self.connaddr = conn, addr
-        req, resp = self.request, self.response
-        try:
-            msg = conn.recv(4096).decode('utf-8')
-            if not msg: conn.close(); return
+        # Set encoding.
+        response.encoding = get_encoding_from_headers(response.headers)
+        # response.raw = resp
+        response.reason = response.raw.reason
 
-            req.prepare(msg, routes)
+        if isinstance(req.url, bytes):
+            response.url = req.url.decode("utf-8")
+        else:
+            response.url = req.url
 
-            # reset response state
-            resp.headers.clear(); resp.cookies.clear()
-            resp.status_code = 200; resp.reason = "OK"; resp._content = b""
+        # Add new cookies from the server.
+        response.cookies = self.extract_cookies(req.headers)
 
-            if not getattr(req, 'method', None) or not getattr(req, 'path', None):
-                conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n"); conn.close(); return
+        # Give the Response some context.
+        response.request = req
+        response.connection = self
 
-            # extract
-            cookies = self.extract_cookies  
-            body = getattr(req, 'body', b'') or b''
-            form_data = self.parse_form_data(body)
+        return response
 
-            path = req.path
-            if len(path) > 1 and path.endswith('/'): path = path[:-1]
-            path = path.split('?', 1)[0]
-            method = req.method
+    # def get_connection(self, url, proxies=None):
+        # """Returns a url connection for the given URL. 
 
-            # find hook
-            hook = req.hook or (routes.get((method, path)) if routes else None)
+        # :param url: The URL to connect to.
+        # :param proxies: (optional) A Requests-style dictionary of proxies used on this request.
+        # :rtype: int
+        # """
 
-            if hook:
-                result = hook(method=method, path=path, headers=req.headers,
-                            cookies=cookies, body=body, form_data=form_data)
+        # proxy = select_proxy(url, proxies)
 
-                if isinstance(result, dict):
-                    resp.status_code = result.get('status', 200)
-                    resp.reason = result.get('reason', 'OK')
+        # if proxy:
+            # proxy = prepend_scheme_if_needed(proxy, "http")
+            # proxy_url = parse_url(proxy)
+            # if not proxy_url.host:
+                # raise InvalidProxyURL(
+                    # "Please check proxy URL. It is malformed "
+                    # "and could be missing the host."
+                # )
+            # proxy_manager = self.proxy_manager_for(proxy)
+            # conn = proxy_manager.connection_from_url(url)
+        # else:
+            # # Only scheme should be lower case
+            # parsed = urlparse(url)
+            # url = parsed.geturl()
+            # conn = self.poolmanager.connection_from_url(url)
 
-                    for k, v in result.get('headers', {}).items(): resp.headers[k] = v
-                    for k, v in result.get('cookies', {}).items(): resp.cookies[k] = v
-
-                    content = result.get('body', b'')
-                    resp._content = content.encode('utf-8') if isinstance(content, str) else \
-                                    (content if isinstance(content, bytes) else str(content).encode('utf-8'))
-
-                    if 'Content-Type' not in resp.headers:
-                        resp.headers['Content-Type'] = 'text/html; charset=utf-8'
-
-                    response_bytes = resp.build_response_header(req) + resp._content
-                else:
-                    response_bytes = resp.build_response(req)
-            else:
-                response_bytes = resp.build_response(req)
-
-            conn.sendall(response_bytes)
-        except Exception:
-            try: conn.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\nInternal Server Error")
-            except: pass
-        finally:
-            try: conn.close()
-            except: pass
+        # return conn
 
 
     def add_headers(self, request):
@@ -185,14 +277,14 @@ class HttpAdapter:
 
         This method is intended to be overridden by subclasses to inject
         custom headers. It does nothing by default.
+
         
         :param request: :class:`Request <Request>` to add headers to.
         """
         pass
 
     def build_proxy_headers(self, proxy):
-        """
-        Returns a dictionary of the headers to add to any request sent
+        """Returns a dictionary of the headers to add to any request sent
         through a proxy. 
 
         :class:`HttpAdapter <HttpAdapter>`.
@@ -206,7 +298,8 @@ class HttpAdapter:
         #       username, password =...
         # we provide dummy auth here
         #
-        username, password = ("user1", "password")
+        
+        username, password = ("admin", "password")
 
         if username:
             headers["Proxy-Authorization"] = (username, password)

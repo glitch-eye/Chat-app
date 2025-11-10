@@ -3,14 +3,13 @@ import argparse
 import time
 from urllib.parse import urlencode, parse_qs
 import re
-from io import StringIO # Dùng để đọc Response dễ dàng hơn
 
 # =======================================================
 # CẤU HÌNH
 # =======================================================
 DEFAULT_PROXY_IP = '127.0.0.1' 
 DEFAULT_PROXY_PORT = 8080      
-TARGET_HOST_APP1 = "app2.local" 
+TARGET_HOST_APP1 = "app1.local" 
 
 # --- HÀM GIAO TIẾP VỚI PROXY (Sử dụng socket) ---
 
@@ -81,7 +80,8 @@ def parse_response(response_data):
         for line in lines[1:]:
             if ': ' in line:
                 key, value = line.split(': ', 1)
-                headers[key.lower()] = value.strip()
+                # Lưu header ở dạng lowercase để dễ truy cập
+                headers[key.lower()] = value.strip() 
                 
         return status_code, header_text, headers, body_bytes
 
@@ -91,42 +91,40 @@ def parse_response(response_data):
 
 # --- HÀM MÔ PHỎNG BROWSER ---
 
-def console_render_html(html_body_bytes):
-    """Mô phỏng 'render' HTML bằng cách trích xuất Form và in ra Console."""
+def extract_login_info(html_body_bytes):
+    """Trích xuất Form Action và các trường Input từ Body HTML."""
     
     html_text = html_body_bytes.decode('utf-8', errors='ignore')
     
-    print("--- CONSOLE RENDERER (Mô phỏng Giao diện Form) ---")
-    
-    # 1. Trích xuất Form (Regex đơn giản)
-    # Tìm kiếm thẻ <form> và các input fields
+    # Regex tìm kiếm thẻ <form> POST trỏ tới /login
     form_match = re.search(r'<form\s+method="(?P<method>POST)"\s+action="(?P<action>/login|/login/?)".*?>(?P<content>.*?)</form>', html_text, re.DOTALL | re.IGNORECASE)
 
     if form_match:
         form_action = form_match.group('action')
         form_content = form_match.group('content')
         
-        print(f"  [Form Action]: POST {form_action}")
-        
-        # 2. Trích xuất Input Fields (Regex đơn giản)
+        # Trích xuất Input Fields
         input_fields = re.findall(r'<input.*?name="(?P<name>.*?)".*?>', form_content, re.IGNORECASE)
         
-        print(f"  [Input Fields]: {input_fields}")
-        print("-----------------------------------------------------")
-        
-        # Mô phỏng quá trình tương tác (Tự động điền)
         simulated_data = {}
         if 'username' in input_fields and 'password' in input_fields:
+            # Mô phỏng quá trình tương tác (Tự động điền)
             simulated_data = {"username": "admin", "password": "password"}
-            print(f"  ✅ Mô phỏng người dùng nhập: {simulated_data}")
-            print("  ✅ Mô phỏng nhấn nút Submit...")
             return form_action, simulated_data
             
-    else:
-        print("  ❌ Không tìm thấy Form Login hợp lệ trong Body HTML.")
-        print("  [Body Preview]:", html_text[:200].replace('\n', ' '))
-        
     return None, None
+
+def extract_login_link(html_body_bytes):
+    """Trích xuất link 'login.html' từ Body HTML 401."""
+    html_text = html_body_bytes.decode('utf-8', errors='ignore')
+    
+    # Regex tìm kiếm thẻ <a href="login.html">
+    link_match = re.search(r'<a\s+href=["\'](?P<href>login.html|/login.html)["\']', html_text, re.IGNORECASE)
+    
+    if link_match:
+        return link_match.group('href')
+        
+    return None
 
 def run_scenario(proxy_ip, proxy_port):
     print("\n\n==================================================")
@@ -138,24 +136,37 @@ def run_scenario(proxy_ip, proxy_port):
     status, _, headers, body_bytes = send_http_request(proxy_ip, proxy_port, 'GET', '/', proxy_host=TARGET_HOST_APP1)
     
     if status != '401':
-        print(f"  ❌ LỖI: Kỳ vọng 401 Unauthorized, nhận được {status}. Kiểm tra lại Server.")
-        if status == '200':
-             print("  (Có thể do Server chưa có logic chuyển hướng/bảo vệ trang /)")
+        print(f"  ❌ LỖI: Kỳ vọng 401 Unauthorized, nhận được {status}. Dừng kịch bản.")
         return
     print(f"  ✅ Nhận Response {status} (Unauthorized). Tiếp tục.")
-
-    # --- BƯỚC 2: "RENDER" VÀ TƯƠNG TÁC (Tạo POST Request) ---
-    print("\n[BƯỚC 2] 'Render' Body HTML và Mô phỏng Tương tác UI...")
     
-    form_action, login_payload = console_render_html(body_bytes)
+    login_link = extract_login_link(body_bytes)
+    if not login_link:
+        print("  ❌ LỖI: Không tìm thấy link 'login.html' trong body 401. Dừng kịch bản.")
+        return
+        
+    # --- BƯỚC 2: REQUEST LẦN 2 - GET /login.html (Click link) ---
+    print(f"\n[BƯỚC 2] Mô phỏng Click link. Gửi GET {login_link} để lấy Form...")
+    status_get_login, _, _, body_bytes_login = send_http_request(proxy_ip, proxy_port, 'GET', login_link, proxy_host=TARGET_HOST_APP1)
+    
+    if status_get_login != '200':
+        print(f"  ❌ LỖI: Kỳ vọng 200 OK cho /login.html, nhận được {status_get_login}. Dừng kịch bản.")
+        return
+    print(f"  ✅ Nhận Response {status_get_login} (OK). Trích xuất Form.")
+    
+    # Trích xuất thông tin Form từ body_bytes_login
+    form_action, login_payload = extract_login_info(body_bytes_login)
     
     if not login_payload:
-        print("  ❌ Dừng kịch bản: Không thể mô phỏng tương tác Form.")
+        print("  ❌ Dừng kịch bản: Không thể trích xuất Form Login hợp lệ.")
         return
+        
+    print(f"  -> Form Action: POST {form_action}")
+    print(f"  -> Dữ liệu mô phỏng: {login_payload}")
 
-    # --- BƯỚC 3: REQUEST LẦN 2 - POST /login (Xác thực và lấy Cookie) ---
+    # --- BƯỚC 3: REQUEST LẦN 3 - POST /login (Xác thực và lấy Cookie) ---
     print(f"\n[BƯỚC 3] Gửi POST {form_action} với dữ liệu đã mô phỏng...")
-    status_post, header_text_post, headers_post, _ = send_http_request(
+    status_post, _, headers_post, _ = send_http_request(
         proxy_ip, proxy_port, 
         'POST', form_action, 
         body=login_payload,
@@ -165,21 +176,21 @@ def run_scenario(proxy_ip, proxy_port):
     set_cookie_header = headers_post.get('set-cookie', '')
     
     print(f"  -> Trạng thái POST: {status_post}")
-    if status_post == '200' and 'auth=true' in set_cookie_header:
+    if set_cookie_header:
         print("  ✅ Xác thực thành công.")
-        print(f"  -> Header Set-Cookie: {set_cookie_header.split(';')[0] + '...'}")
+        print(f"  -> Header Set-Cookie: {set_cookie_header}")
     else:
-        print(f"  ❌ LỖI: POST thất bại (Status: {status_post} hoặc thiếu Cookie).")
+        print(f"  ❌ LỖI: POST thất bại (Status: {status_post} hoặc thiếu Cookie). Dừng kịch bản.")
         return
         
-    # --- BƯỚC 4: REQUEST LẦN 3 - GET / (Kiểm tra Cookie) ---
+    # --- BƯỚC 4: REQUEST LẦN 4 - GET / (Kiểm tra Cookie) ---
     
     # Trích xuất Cookie string (chỉ lấy auth=true)
-    cookie_value = set_cookie_header.split(';')[0]
+    cookie_value = set_cookie_header
     
     print(f"\n[BƯỚC 4] Gửi GET / LẠI với Cookie: {cookie_value}...")
     
-    headers_with_cookie = {"Cookie": cookie_value}
+    headers_with_cookie = {"cookies": cookie_value}
     status_cookie, _, _, _ = send_http_request(
         proxy_ip, proxy_port, 'GET', '/', 
         headers=headers_with_cookie, 

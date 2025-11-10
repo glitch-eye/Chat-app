@@ -112,6 +112,7 @@ class Request():
             # Yêu cầu không hợp lệ
             return
         print("[Request] {} path {} version {}".format(self.method, self.path, self.version))
+
         self.url = self.path.split("/")[-1]
         #
         # @bksysnet Preapring the webapp hook with WeApRous instance
@@ -122,7 +123,7 @@ class Request():
         
         if not routes == {}:
             self.routes = routes
-            self.hook = routes.get((self.method, self.path))
+            self.hook = routes.get((self.method, self.path.split(".")[0]))
             #
             # self.hook manipulation goes here
             # ...
@@ -133,10 +134,10 @@ class Request():
         self.body = raw_body_bytes
 
         self.headers = self.prepare_headers(request)
-        cookies = self.headers.get('Set-Cookie', {})
+        cookies = self.headers.get('cookies', "")
             #
             #  TODO: implement the cookie function here
-            #        by parsing the header            #
+            #        by parsing the header       #
         self.prepare_cookies(cookies)
 
         return
@@ -168,6 +169,6 @@ class Request():
         return
 
     def prepare_cookies(self, cookies):
-        self.headers["Set-Cookie"] = cookies
+        self.headers["cookies"] = cookies
         self.cookies = cookies
         

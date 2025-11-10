@@ -202,8 +202,12 @@ class Response():
 
         :rtype tuple: (int, bytes) representing content length and content data.
         """
+        if path == "/login":
+            filepath = os.path.join("www/", "/index.html".lstrip('/'))
+        else:
+            filepath = os.path.join(base_dir, path.lstrip('/'))
+        
 
-        filepath = os.path.join(base_dir, path.lstrip('/'))
         print("[Response] serving the object at location {}".format(filepath))
         
         try:
@@ -268,7 +272,12 @@ class Response():
         if auth_header:
             self.auth = auth_header
             headers["Authorization"] = auth_header
-        else:
+            if request.path == "/":
+                c_len, self._content = self.build_content("/index.html", BASE_DIR + "www/")
+                headers["Content-Length"] = "{}".format(len(self._content))
+        elif request.path != "/login.html":
+            c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")
+            headers["Content-Length"] = "{}".format(len(self._content))
             self.auth = None
 
         status_code = self.status_code if self.status_code else 200
@@ -355,5 +364,4 @@ class Response():
 
         c_len, self._content = self.build_content(path, base_dir)
         self._header = self.build_response_header(request)
-
         return self._header + self._content
