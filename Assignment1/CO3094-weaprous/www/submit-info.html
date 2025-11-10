@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Đăng ký Peer đơn giản</title>
+    <style>
+        /* CSS tối giản để dễ đọc */
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 350px; margin: auto; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input[type="text"] { width: 95%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 3px; }
+        input[type="submit"] { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🔗 Đăng ký Thông tin Peer</h2>
+        
+        <form method="POST" action="/submit-info/">
+            
+            <label for="username">Tên người dùng (Username):</label>
+            <input type="text" id="username" name="username" required 
+                   placeholder="Ví dụ: peer_alice">
+            
+            <label for="peer_ip">Địa chỉ IP:</label>
+            <input type="text" id="peer_ip" name="peer_ip" required 
+                   placeholder="Ví dụ: 192.168.1.100 (IP Nội bộ)">
+            
+            <label for="peer_port">Cổng (Port):</label>
+            <input type="text" id="peer_port" name="peer_port" required 
+                   placeholder="Ví dụ: 8000">
+            
+            <input type="submit" value="Đăng ký Peer">
+        </form>
+        
+        <p style="font-size: 0.8em; margin-top: 20px;">
+            *Dữ liệu sẽ được gửi đến API <code>/submit-info/</code> qua phương thức **POST**.
+        </p>
+    </div>
+</body>
+</html>

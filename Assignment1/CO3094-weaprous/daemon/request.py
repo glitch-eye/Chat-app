@@ -123,7 +123,7 @@ class Request():
         
         if not routes == {}:
             self.routes = routes
-            self.hook = routes.get((self.method, self.path.split(".")[0]))
+            self.hook = routes.get((self.method, f"/{self.path.split('/')[1]}"))
             #
             # self.hook manipulation goes here
             # ...
