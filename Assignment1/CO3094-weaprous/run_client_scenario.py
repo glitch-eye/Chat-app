@@ -3,6 +3,7 @@ import argparse
 import time
 from urllib.parse import urlencode, parse_qs
 import re
+import json
 
 # =======================================================
 # CẤU HÌNH
@@ -35,6 +36,7 @@ def send_http_request(host, port, method, path, headers=None, body=None, proxy_h
     header_lines = [f"{k}: {v}" for k, v in request_headers.items()]
     request_data = request_line + "\r\n".join(header_lines) + "\r\n\r\n"
     request_data_bytes = request_data.encode('utf-8') + body_bytes
+    print(request_data_bytes)
     
     response_data = b""
     try:
@@ -119,7 +121,7 @@ def extract_login_link(html_body_bytes):
     html_text = html_body_bytes.decode('utf-8', errors='ignore')
     
     # Regex tìm kiếm thẻ <a href="login.html">
-    link_match = re.search(r'<a\s+href=["\'](?P<href>login.html|/login.html)["\']', html_text, re.IGNORECASE)
+    link_match = re.search(r'<a\s+href=["\'](?P<href>login|/login)["\']', html_text, re.IGNORECASE)
     
     if link_match:
         return link_match.group('href')
@@ -183,27 +185,85 @@ def run_scenario(proxy_ip, proxy_port):
         print(f"  ❌ LỖI: POST thất bại (Status: {status_post} hoặc thiếu Cookie). Dừng kịch bản.")
         return
         
-    # --- BƯỚC 4: REQUEST LẦN 4 - GET / (Kiểm tra Cookie) ---
+    print("\n[BƯỚC 4] TEST 1: POST /submit-info/ (Thành công - Gửi IP và Port hợp lệ)")
     
-    # Trích xuất Cookie string (chỉ lấy auth=true)
-    cookie_value = set_cookie_header
+    AUTH_HEADERS = {"cookies": set_cookie_header}
+    valid_peer_data = {
+        "ip": "192.168.1.50",
+        "port": "5000" # Phải gửi dưới dạng string trong body
+    }
     
-    print(f"\n[BƯỚC 4] Gửi GET / LẠI với Cookie: {cookie_value}...")
-    
-    headers_with_cookie = {"cookies": cookie_value}
-    status_cookie, _, _, _ = send_http_request(
-        proxy_ip, proxy_port, 'GET', '/', 
-        headers=headers_with_cookie, 
+    status_ok, header_ok, headers_ok, body_ok = send_http_request(
+        proxy_ip, proxy_port, 
+        'POST', '/submit-info/', 
+        headers=AUTH_HEADERS,
+        body=valid_peer_data,
         proxy_host=TARGET_HOST_APP1
     )
     
-    if status_cookie == '200':
-        print(f"  ✅ Nhận Response {status_cookie} với Cookie. TASK 1B (Access Control) thành công.")
+    print(f"  -> Trạng thái Response: {status_ok}")
+    if status_ok == '200':
+        print(f"  ✅ THÀNH CÔNG: API trả về 200 OK.")
     else:
-        print(f"  ❌ LỖI: Nhận Response {status_cookie} dù đã gửi Cookie hợp lệ.")
+        print(f"  ❌ THẤT BẠI: Kỳ vọng 200 OK, nhận được {status_ok}.")
+        
+    # -------------------------------------------------------------------
+    # --- BƯỚC 5: API TEST 2 - THIẾU DỮ LIỆU (STATUS 400 - Missing IP/Port) ---
+    # -------------------------------------------------------------------
+    
+    print("\n[BƯỚC 5] TEST 2: POST /submit-info/ (Lỗi 400 - Thiếu Port)")
+    
+    missing_data = {
+        "ip": "192.168.1.50"
+        # Thiếu "port"
+    }
+    
+    status_missing, header_missing, headers_missing, body_missing = send_http_request(
+        proxy_ip, proxy_port, 
+        'POST', '/submit-info/', 
+        headers=AUTH_HEADERS,
+        body=missing_data,
+        proxy_host=TARGET_HOST_APP1
+    )
+    
+    print(f"  -> Trạng thái Response: {status_missing}")
+    if status_missing == '400':
+        print(f"  ✅ THÀNH CÔNG: API trả về 400 BAD REQUEST.")
+        # Kiểm tra nội dung lỗi (body_missing là byte chuỗi JSON)
+        print(f"  -> Lỗi Server trả về (Reason): {headers_missing.get('content-type', '')} (Body Preview: {body_missing[:50]})") 
+    else:
+        print(f"  ❌ THẤT BẠI: Kỳ vọng 400 BAD REQUEST, nhận được {status_missing}.")
+
+    # -------------------------------------------------------------------
+    # --- BƯỚC 6: API TEST 3 - SAI ĐỊNH DẠNG PORT (STATUS 400 - ValueError) ---
+    # -------------------------------------------------------------------
+    
+    print("\n[BƯỚC 6] TEST 3: POST /submit-info/ (Lỗi 400 - Port không phải số)")
+    
+    invalid_data = {
+        "ip": "192.168.1.50",
+        "port": "abc" # Sai định dạng
+    }
+    
+    status_invalid, header_invalid, headers_invalid, body_invalid = send_http_request(
+        proxy_ip, proxy_port, 
+        'POST', '/submit-info/', 
+        headers=AUTH_HEADERS,
+        body=invalid_data,
+        proxy_host=TARGET_HOST_APP1
+    )
+    
+    print(f"  -> Trạng thái Response: {status_invalid}")
+    if status_invalid == '400':
+        print(f"  ✅ THÀNH CÔNG: API trả về 400 BAD REQUEST (Lỗi ValueError).")
+        # Kiểm tra nội dung lỗi
+        print(f"  -> Lỗi Server trả về (Reason): {headers_invalid.get('content-type', '')} (Body Preview: {body_invalid[:50]})") 
+    else:
+        print(f"  ❌ THẤT BẠI: Kỳ vọng 400 BAD REQUEST, nhận được {status_invalid}.")
+
 
     print("\n==================================================")
-    print("[HOÀN TẤT KỊCH BẢN KIỂM TRA TỰ ĐỘNG]")
+    print("[HOÀN TẤT KỊCH BẢN KIỂM TRA TỰ ĐỘNG API P2P]")
     print("==================================================")
 
 # =======================================================

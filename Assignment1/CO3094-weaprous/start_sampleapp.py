@@ -108,7 +108,6 @@ def check_authentication(request, response, adapter):
     with STATE_LOCK:
         user_session = SESSION_STORE.get(session_id)
 
-    print
     if not user_session:
         response.status_code = 401
         response.reason = "Unauthorized"
@@ -130,6 +129,7 @@ def home_route(request, response, adapter):
 def login_route(request, response, adapter):
     response.status_code = 200
     response.reason = "OK"
+    request.headers["authorization"] = True
 
 
 @app.route('/login', methods=['POST'])
@@ -176,21 +176,24 @@ def submit_info_route(request, response, adapter):
     """
     Peer Registration: Cập nhật IP và P2P Port của Peer vào Tracker.
     """
+    response.status_code = 200
+    response.reason = "OK"
+    request.headers["authorization"] = True
     
 @app.route('/submit-info', methods=['POST'])
 def submit_info_route(request, response, adapter):
     """
     Peer Registration: Cập nhật IP và P2P Port của Peer vào Tracker.
     """
-    session_id = request.cookies.get('session_id')
+    
     
     if check_authentication(request, response, adapter) is None:
         return 
-    
+    session_id = request.cookies.split("=",1)[1]
 
     body_params = parse_body_params(request.body)
     ip = body_params.get('ip')
-    p2p_port = body_params.get('p2p_port')
+    p2p_port = body_params.get('port')
 
     if not ip or not p2p_port:
         response.status_code = 400
@@ -212,11 +215,11 @@ def submit_info_route(request, response, adapter):
         # 2. Đặt trạng thái Online
         SESSION_STORE[session_id]['status'] = 'online'
         
-    
+    response.reason = "OK"
     response.status_code = 200
     response.body = json.dumps({
         "status": "info updated", 
-        "p2p_address": f"{ip}:{p2p_port}"
+        "peer_address": f"{ip}:{p2p_port}"
     }).encode('utf-8')
     response.headers['Content-Type'] = 'application/json'
 
@@ -251,6 +254,7 @@ def add_list_route(request, response, adapter):
             SESSION_STORE[session_id].setdefault('channels', []).append(channel_name)
     
     response.status_code = 200
+
     response.body = json.dumps({"status": f"Joined channel {channel_name}", "channel": channel_name}).encode('utf-8')
     response.headers['Content-Type'] = 'application/json'
 

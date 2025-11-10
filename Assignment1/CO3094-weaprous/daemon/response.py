@@ -202,12 +202,13 @@ class Response():
 
         :rtype tuple: (int, bytes) representing content length and content data.
         """
-        if path == "/login":
-            filepath = os.path.join("www/", "/index.html".lstrip('/'))
+        if path == "/login" :
+            filepath = os.path.join("www/", "/login.html".lstrip('/'))
+        elif path == "/submit-info/" :
+            filepath = os.path.join("www/", "/submit-info.html".lstrip('/'))
         else:
             filepath = os.path.join(base_dir, path.lstrip('/'))
         
-
         print("[Response] serving the object at location {}".format(filepath))
         
         try:
@@ -258,6 +259,7 @@ class Response():
             "Connection": "{}".format(rsphdr.get("Connection", "close")),
             "Cache-Control": "no-cache",
         }
+        print(headers["Content-Type"])
 
         # Add optional headers from request if present
         if reqhdr.get("accept"):
@@ -275,7 +277,13 @@ class Response():
             if request.path == "/":
                 c_len, self._content = self.build_content("/index.html", BASE_DIR + "www/")
                 headers["Content-Length"] = "{}".format(len(self._content))
-        elif request.path != "/login.html":
+            elif request.path == "/login" and request.method == "POST":
+                c_len, self._content = self.build_content("/submit-info.html", BASE_DIR + "www/")
+                headers["Content-Length"] = "{}".format(len(self._content))
+            elif request.path == "/submit-info/" and request.method == "POST":
+                c_len, self._content = self.build_content("/index.html", BASE_DIR + "www/")
+                headers["Content-Length"] = "{}".format(len(self._content))
+        else:
             c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")
             headers["Content-Length"] = "{}".format(len(self._content))
             self.auth = None
