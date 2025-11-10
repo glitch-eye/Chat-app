@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Chat P2P</title>
+    <style>
+        /* --- CSS CHO GIAO DIỆN CHAT --- */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f4f7f9;
+        }
+        #chat-header {
+            padding: 15px;
+            background-color: #007bff;
+            color: white;
+            font-size: 1.2em;
+            font-weight: 600;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #message-window {
+            flex-grow: 1; /* Chiếm hết không gian còn lại */
+            padding: 15px;
+            overflow-y: auto; /* 🎯 YÊU CẦU 1: Cửa sổ cuộn */
+            background-color: white;
+        }
+        .message {
+            margin-bottom: 10px;
+            max-width: 80%;
+            padding: 8px 12px;
+            border-radius: 18px;
+            line-height: 1.4;
+            word-wrap: break-word; /* Đảm bảo tin nhắn dài không tràn */
+        }
+        .message.sent { /* Tin nhắn của mình (Gửi đi) */
+            align-self: flex-end;
+            margin-left: auto;
+            background-color: #007bff;
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+        .message.received { /* Tin nhắn của đối tác (Nhận vào) */
+            align-self: flex-start;
+            margin-right: auto;
+            background-color: #e0e0e0;
+            color: #333;
+            border-bottom-left-radius: 2px;
+        }
+        .message-author {
+            font-size: 0.8em;
+            font-weight: bold;
+            margin-bottom: 2px;
+            display: block;
+        }
+        #message-input-area {
+            padding: 10px 15px;
+            background-color: #fff;
+            border-top: 1px solid #ccc;
+            box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
+        }
+        #message-form {
+            display: flex;
+        }
+        #message-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            margin-right: 10px;
+            font-size: 1em;
+            outline: none;
+        }
+        #send-button {
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background-color 0.3s;
+        }
+        #send-button:hover {
+            background-color: #218838;
+        }
+        /* 🎯 Thêm style cho Notification tạm thời */
+        .notification-badge {
+            color: #dc3545;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="chat-header">
+        Đang Chat với <span id="peer-name">[Tên Peer]</span> 
+        <span id="notification-badge" class="notification-badge" style="display:none;">(Tin nhắn mới!)</span>
+    </div>
+
+    <div id="message-window">
+        </div>
+
+    <div id="message-input-area">
+        <form id="message-form">
+            <input type="text" id="message-input" placeholder="Nhập tin nhắn..." autocomplete="off" required>
+            <button type="submit" id="send-button">Gửi</button>
+        </form>
+    </div>
+
+    <script>
+        // Lấy username của Peer đang chat từ URL query string
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetUsername = urlParams.get('peer_username');
+        let myUsername = '[Tôi]'; // 💡 Sẽ cần lấy từ Backend Python
+
+        document.getElementById('peer-name').textContent = targetUsername || 'Đối tác không xác định';
+
+        // --- HÀM TIỆN ÍCH ---
+
+        function appendMessageToUI(message) {
+            // message: { author: 'Alice', content: 'Hi Bob', timestamp: '...' }
+            const msgDiv = document.createElement('div');
+            const isSent = message.author === myUsername;
+            
+            msgDiv.className = 'message ' + (isSent ? 'sent' : 'received');
+            
+            // 🎯 YÊU CẦU: Hiển thị tin nhắn (immutable) 🎯
+            msgDiv.innerHTML = `
+                <span class="message-author">${isSent ? 'Bạn' : message.author}</span>
+                ${message.content}
+            `;
+            
+            document.getElementById('message-window').appendChild(msgDiv);
+        }
+
+        function scrollToBottom() {
+            const window = document.getElementById('message-window');
+            window.scrollTop = window.scrollHeight;
+        }
+
+        // --- 🎯 LOGIC GỬI TIN NHẮN (HTTP POST CỤC BỘ) 🎯 ---
+        document.getElementById('message-form').addEventListener('submit', function(e) {
+            e.preventDefault(); 
+            const inputField = document.getElementById('message-input');
+            const content = inputField.value.trim();
+
+            if (!content) return;
+
+            // 1. Gửi HTTP Request đến Backend Python CỤC BỘ
+            fetch('/send-message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    to: targetUsername, // Tên Peer đích
+                    content: content 
+                })
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Tạm thời hiển thị tin nhắn của mình ngay lập tức (Responsive UI)
+                    appendMessageToUI({ author: myUsername, content: content });
+                    scrollToBottom();
+                    inputField.value = ''; // Xóa input
+                } else {
+                    alert('Lỗi: Không thể gửi tin nhắn qua Backend.');
+                }
+            })
+            .catch(error => {
+                console.error('Error sending message:', error);
+                alert('Lỗi kết nối Backend cục bộ.');
+            });
+        });
+
+        // --- 🎯 LOGIC NHẬN TIN NHẮN (POLLING) 🎯 ---
+        function pollNewMessages() {
+            // Lắng nghe tin nhắn mới từ Peer đang chat
+            fetch(`/get-messages?peer=${targetUsername}`)
+                .then(res => {
+                    if (res.status === 200) return res.json();
+                    throw new Error('Lỗi Polling');
+                })
+                .then(newMessages => {
+                    let receivedNew = false;
+                    newMessages.forEach(msg => {
+                        appendMessageToUI(msg);
+                        receivedNew = true;
+                    });
+                    
+                    if (receivedNew) {
+                        scrollToBottom();
+                        // 🎯 YÊU CẦU 4: Hệ thống thông báo 🎯
+                        // Tạm thời thay đổi tiêu đề trình duyệt
+                        document.title = `(${newMessages.length}) Tin nhắn mới từ ${targetUsername}`;
+                        document.getElementById('notification-badge').style.display = 'inline';
+                    }
+                })
+                .catch(error => {
+                    console.error("Polling error:", error);
+                });
+        }
+        
+        // Bắt đầu Polling sau 1 giây
+        setInterval(pollNewMessages, 1000); 
+
+        // Đặt lại tiêu đề khi cửa sổ được focus
+        window.onfocus = function() {
+            document.title = `Chat P2P với ${targetUsername}`;
+            document.getElementById('notification-badge').style.display = 'none';
+        };
+
+        // Khởi tạo (Cần lấy username của mình sau khi Backend hoạt động)
+        // Đây là bước quan trọng: Backend cần cung cấp username của Peer hiện tại!
+        // Giả sử có một API /my-info/
+        fetch('/my-info')
+            .then(res => res.json())
+            .then(data => {
+                myUsername = data.username;
+            })
+            .catch(() => {
+                console.warn("Could not fetch local username. Using default.");
+            });
+    </script>
+</body>
+</html>

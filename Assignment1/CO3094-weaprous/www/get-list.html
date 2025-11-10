@@ -2,36 +2,65 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Peer List</title>
+    <title>Peer List and P2P Connect</title>
     <style>
+        /* --- CSS STYLES START --- */
         body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 30px; 
+            background-color: #f4f7f9;
+            color: #333;
         }
+        h1 {
+            color: #007bff;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        
+        /* 🎯 SỬA CSS CHO THANH CUỘN 🎯 */
+        #table-container { 
+            max-height: 400px; /* Giới hạn chiều cao */
+            overflow-y: auto; /* Thêm thanh cuộn dọc khi cần */
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background-color: white;
+            border-radius: 5px;
+        }
+
         table { 
-            width: 80%; 
+            width: 100%; 
             border-collapse: collapse; 
-            margin-top: 20px; 
+            /* Bỏ box-shadow khỏi table vì đã có ở table-container */
         }
         th, td { 
-            border: 1px solid #ddd; 
-            padding: 8px; 
+            border: 1px solid #e0e0e0; 
+            padding: 12px 15px; 
             text-align: left; 
         }
         th { 
-            background-color: #f2f2f2; 
+            background-color: #007bff; 
+            color: white;
+            text-transform: uppercase;
+            font-size: 14px;
+            position: sticky; /* Giữ header lại khi cuộn */
+            top: 0;
+            z-index: 10;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
         }
         /* Style cho các nút bấm/liên kết */
-        .action-button {
-            padding: 10px 15px;
+        .action-button, .connect-button {
+            padding: 8px 15px;
             margin-right: 10px;
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            font-weight: bold;
-            text-decoration: none; /* Dùng cho thẻ <a> */
+            font-weight: 600;
+            text-decoration: none;
             display: inline-block;
             text-align: center;
+            transition: background-color 0.3s ease;
         }
         .reload-button {
             background-color: #007bff;
@@ -41,79 +70,251 @@
             background-color: #6c757d;
             color: white;
         }
-        .action-button:hover {
-            opacity: 0.8;
+        .connect-button {
+            background-color: #28a745; 
+            color: white;
+            padding: 6px 12px;
+            font-size: 13px;
         }
+        /* CSS cho nút Chat */
+        .connect-button[data-status="connected"] {
+            background-color: #6f42c1; /* Màu Tím cho Chat */
+        }
+        
+        #log-output {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            max-height: 200px;
+            overflow-y: auto;
+            border-radius: 5px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding-bottom: 2px;
+            border-bottom: 1px dotted #eee;
+        }
+        .log-error {
+            color: #dc3545; 
+            font-weight: bold;
+        }
+        .log-success {
+            color: #28a745; 
+        }
+        /* --- CSS STYLES END --- */
     </style>
 </head>
 <body>
     <h1>Danh sách Peers đang hoạt động</h1>
     
-    <div style="margin-bottom: 20px;">
+    <div style="margin-bottom: 20px; display: flex; align-items: center;">
         <button onclick="fetchPeerList()" class="action-button reload-button">Tải lại danh sách</button>
-        
         <a href="/" class="action-button home-button">Quay về Trang chủ</a>
+        
+        <div style="margin-left: 30px;">
+            <label for="connection-filter" style="margin-right: 10px; font-weight: 600;">Lọc theo trạng thái:</label>
+            <select id="connection-filter" class="action-button" onchange="displayPeerList(currentPeerData)">
+                <option value="both">Tất cả</option>
+                <option value="connected">Đã kết nối (Chat)</option>
+                <option value="not_connected">Chưa kết nối (Connect)</option>
+            </select>
+        </div>
     </div>
 
-    <table id="peer-table">
-        <thead>
-            <tr>
-                <th>Username</th>
-                <th>IP Address</th>
-                <th>P2P Port</th>
-                <th>Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            </tbody>
-    </table>
+    <div id="table-container">
+        <table id="peer-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>IP Address</th>
+                    <th>P2P Port</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                </tbody>
+        </table>
+    </div>
     
     <p id="status-message"></p>
+    
+    <h2>📜 Log Kết nối</h2>
+    <div id="log-output"></div>
 
     <script>
-        function fetchPeerList() {
+        // 🎯 BIẾN LƯU TRỮ DỮ LIỆU GỐC 🎯
+        let currentPeerData = [];
+        const logOutputDiv = document.getElementById('log-output');
+
+        function logStatus(message, type = 'info') {
+            const statusMsg = document.createElement('p');
+            statusMsg.className = 'log-entry';
+            
+            let emoji = 'ℹ️';
+            if (type === 'error') {
+                statusMsg.classList.add('log-error');
+                emoji = '❌';
+            } else if (type === 'success') {
+                statusMsg.classList.add('log-success');
+                emoji = '✅';
+            }
+
+            statusMsg.textContent = `[${new Date().toLocaleTimeString()}] ${emoji} ${message}`;
+            
+            if (logOutputDiv.firstChild) {
+                logOutputDiv.insertBefore(statusMsg, logOutputDiv.firstChild);
+            } else {
+                logOutputDiv.appendChild(statusMsg);
+            }
+        }
+
+        function initiateConnection(targetIp, targetPort, targetUsername) {
+            
+            const connectUrl = '/connect-peer/'; 
+            
+            const requestBody = {
+                'ip': targetIp,       
+                'port': targetPort,
+                'username': targetUsername 
+            };
+
+            logStatus(`Đang gửi yêu cầu kết nối đến ${targetUsername} (${targetIp}:${targetPort}) qua Tracker...`);
+            
+            fetch(connectUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json' 
+                },
+                body: JSON.stringify(requestBody) 
+            })
+            .then(async response => {
+                
+                let logMessage = '';
+
+                if (response.ok) { // Status 200-299: Thành công
+                    logMessage = `Tracker đã ghi nhận thành công. Peer B (${targetUsername}) đã phản hồi (Status ${response.status}).`;
+                    logStatus(logMessage, 'success');
+                    // Tải lại toàn bộ danh sách để cập nhật trạng thái
+                    fetchPeerList(); 
+                    return; 
+                } 
+                
+                logMessage = `Lỗi Tracker: Không thể khởi tạo kết nối. Status: ${response.status}.`;
+                
+                try {
+                    const errorData = await response.json();
+                    const serverMessage = errorData.message || errorData.error;
+                    
+                    if (serverMessage) {
+                        logMessage = `Lỗi (${response.status}): ${serverMessage}`;
+                    } else if (response.status === 401) {
+                        logMessage = "Lỗi: Bạn chưa đăng nhập hoặc Session đã hết hạn. Vui lòng đăng nhập lại (401 Unauthorized).";
+                    }
+                } catch (e) {
+                    logMessage += " (Không nhận được phản hồi lỗi JSON)";
+                }
+                
+                logStatus(logMessage, 'error');
+
+            })
+            .catch(error => {
+                logStatus(`Lỗi mạng/Hệ thống: Không thể kết nối với Tracker Server.`, 'error');
+                console.error('Lỗi mạng fetch:', error);
+            });
+        }
+        
+        // 🎯 HÀM MỚI: HIỂN THỊ DANH SÁCH DỰA TRÊN DỮ LIỆU ĐÃ LỌC 🎯
+        function displayPeerList(data) {
             const tbody = document.getElementById('peer-table').getElementsByTagName('tbody')[0];
+            const filterValue = document.getElementById('connection-filter').value;
+            tbody.innerHTML = '';
+            
+            // Lọc dữ liệu
+            const filteredData = data.filter(peer => {
+                const isConnected = peer.isConnected || false; 
+                
+                if (filterValue === 'connected') {
+                    return isConnected === true;
+                } else if (filterValue === 'not_connected') {
+                    return isConnected === false;
+                }
+                return true; // both
+            });
+            
             const statusMsg = document.getElementById('status-message');
-            tbody.innerHTML = ''; // Xóa dữ liệu cũ
+            statusMsg.textContent = `Hiển thị ${filteredData.length} Peer (Tổng: ${currentPeerData.length}).`;
+
+
+            filteredData.forEach(peer => {
+                // Cấu trúc dữ liệu: [0: username, 1: ip, 2: p2p_port, 3: status, 4: is_connected]
+
+                const row = tbody.insertRow();
+                
+                row.insertCell().textContent = peer.username; // Username
+                row.insertCell().textContent = peer.ip; // IP
+                row.insertCell().textContent = peer.p2p_port; // P2P Port
+                row.insertCell().textContent = peer.status; // Status
+
+                const actionCell = row.insertCell();
+                
+                const actionBtn = document.createElement('button');
+                
+                const isConnected = peer.isConnected || false; 
+                
+                if (isConnected) {
+                    actionBtn.textContent = 'Chat';
+                    actionBtn.className = 'connect-button'; 
+                    actionBtn.setAttribute('data-status', 'connected'); // Dùng cho CSS
+                    
+                    actionBtn.onclick = function() {
+                        logStatus(`Mở cửa sổ Chat với ${peer[0]}... (Logic chưa được triển khai)`, 'info');
+                    };
+
+                } else {
+                    actionBtn.textContent = 'Connect';
+                    actionBtn.className = 'connect-button';
+                    actionBtn.setAttribute('data-status', 'not-connected'); // Dùng cho CSS
+                    
+                    actionBtn.onclick = function() {
+                        initiateConnection(peer[1], peer[2], peer[0]);
+                    };
+                }
+                
+                actionCell.appendChild(actionBtn);
+            });
+        }
+
+
+        function fetchPeerList() {
+            const statusMsg = document.getElementById('status-message');
             statusMsg.textContent = 'Đang tải...';
 
-            // 1. Gửi Request GET đến API /list/
-            fetch('/list/')
+            fetch('/list/') 
                 .then(response => {
                     if (response.status === 401) {
-                        // Nếu chưa xác thực, chuyển hướng về trang đăng nhập
                         window.location.href = '/login.html'; 
                         return null;
                     }
                     if (!response.ok) {
-                        throw new Error('Lỗi mạng hoặc Server');
+                        throw new Error('Lỗi tải danh sách Peer');
                     }
-                    return response.json(); // Phân tích JSON Response
+                    return response.json();
                 })
                 .then(data => {
                     if (!data) return; 
                     
-                    statusMsg.textContent = `Tìm thấy ${data.length} Peer.`;
-                    
-                    // 2. Lặp qua dữ liệu và chèn vào bảng
-                    data.forEach(peer => {
-                        const row = tbody.insertRow();
-                        
-                        // *Giả định* API trả về JSON Object:
-                        row.insertCell().textContent = peer.username; 
-                        row.insertCell().textContent = peer.ip;
-                        row.insertCell().textContent = peer.p2p_port;
-                        row.insertCell().textContent = peer.status;
-                        
-                    });
+                    // 🎯 LƯU DỮ LIỆU GỐC VÀ GỌI HÀM HIỂN THỊ 🎯
+                    currentPeerData = data; 
+                    displayPeerList(currentPeerData);
                 })
                 .catch(error => {
                     console.error('Lỗi khi tải Peer List:', error);
-                    statusMsg.textContent = `Lỗi: Không thể kết nối hoặc Server không phản hồi. (${error.message})`;
+                    statusMsg.textContent = `Lỗi: Không thể tải danh sách từ Tracker. (${error.message})`;
                 });
         }
 
-        // Tải danh sách ngay khi trang được load
         document.addEventListener('DOMContentLoaded', fetchPeerList);
     </script>
 </body>

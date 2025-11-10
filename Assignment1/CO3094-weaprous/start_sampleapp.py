@@ -33,15 +33,33 @@ from daemon.backend import SESSION_STORE, CHANNEL_STORE, STATE_LOCK
 from daemon.weaprous import WeApRous
 from daemon.httpadapter import HttpAdapter, parse_body_params
 from urllib.parse import urlparse, parse_qs
+import subprocess
+import sys
 
+PEER_CLIENT_PROCESSES = {} 
+PEER_CLIENT_LOCK = threading.Lock()
 # 🟢 Khóa (Lock) để đảm bảo an toàn khi cập nhật trạng thái chung
 
 PORT = 8000  # Default port
 
 app = WeApRous()
 
-PROXY_HOST_URL = "http://app1.local:8080"
-BASE_DIR_FOR_HTML = "www"
+def start_process(file_name, ip, port, role, sessionid):
+    """Khởi chạy một tiến trình Server mới."""
+    print(f"[{role}] 🚀 Khởi chạy {file_name} tại {ip}:{port}...")
+    
+    command = [
+        sys.executable,  
+        file_name,
+        '--server-ip', ip,
+        '--server-port', str(port)
+    ]
+    
+    # Chạy ngầm
+    process = subprocess.Popen(command, stdout=sys.stdout, stderr=sys.stderr)
+    return process
+
+
 
 def get_session_id_from_request():
     """Trích xuất Session ID từ Header Cookie."""
@@ -54,7 +72,7 @@ def get_session_id_from_request():
         return cookies
 
 
-def handle_get_peer_list():
+def handle_get_peer_list(exception_id = None):
     
     # 1. KIỂM TRA XÁC THỰC: Lấy danh sách session_id từ request
     session_id_lst = get_session_id_from_request()
@@ -64,12 +82,16 @@ def handle_get_peer_list():
         return []  # Không có session hợp lệ → trả về danh sách rỗng
     
     clean_peer_list = []
-    
+
+    channel = []
+    if exception_id is not None:
+        with STATE_LOCK:
+            channel = CHANNEL_STORE.get(exception_id, [])
     # 2. ĐỌNG BỘ TRUY CẬP SESSION_STORE VỚI LOCK
     with STATE_LOCK:
         for session_id in session_id_lst:
             # Kiểm tra xem session_id có tồn tại trong SESSION_STORE không
-            if session_id not in SESSION_STORE:
+            if session_id == exception_id:
                 continue  # Bỏ qua session không hợp lệ
             
             session_data = SESSION_STORE[session_id]
@@ -81,55 +103,39 @@ def handle_get_peer_list():
             status = session_data.get('status')
             
             # Chỉ thêm vào danh sách nếu các trường bắt buộc tồn tại và hợp lệ
-            clean_peer_list.append((username, ip, p2p_port, status))
+            if exception_id is not None:
+                clean_peer_list.append((username, ip, p2p_port, status, session_id in channel))
+            else:
+                clean_peer_list.append((username, ip, p2p_port, status))
     
     return clean_peer_list
 
-def get_base_dir():
-    """Lấy thư mục gốc (nơi script này đang chạy)"""
-    return os.path.dirname(os.path.abspath(__file__))
+def build_error_response_json_bytes(status_code, message):
+    """Tạo body JSON bytes cho phản hồi lỗi."""
+    json_string = json.dumps({"message": message})
+    return json_string.encode('utf-8')
 
+def lookup(username):
+    """Tìm sectionid cho username"""
+    session_id_lst = get_session_id_from_request()
+    
+    # Kiểm tra tính hợp lệ của danh sách session_id
+    if not session_id_lst or not isinstance(session_id_lst, list):
+        return None  # Không có session hợp lệ → trả về danh sách rỗng
+    
+    # 2. ĐỌNG BỘ TRUY CẬP SESSION_STORE VỚI LOCK
+    with STATE_LOCK:
+        for session_id in session_id_lst:
+            # Kiểm tra xem session_id có tồn tại trong SESSION_STORE không
+            
+            session_data = SESSION_STORE[session_id]
+            # Trích xuất các trường cần thiết
+            if username == session_data.get('username'):
+                return session_id
+    return None
 # -------------------------------------------------------
 # LOGIC TẢI VÀ SỬA ĐỔI (CHỈ CHẠY MỘT LẦN KHI STARTUP)
 # -------------------------------------------------------
-
-def _load_page_content(filename):
-    """Đọc nội dung file HTML từ thư mục www."""
-    filepath = os.path.join(get_base_dir(), BASE_DIR_FOR_HTML, filename)
-    try:
-        with open(filepath, 'rb') as f:
-            content = f.read()
-            return content
-    except FileNotFoundError:
-        print(f"[ERROR] File www/{filename} không tìm thấy.")
-        return None
-    except Exception as e:
-        return None
-
-def load_and_modify_html(filename, serverurl):
-    """Tải nội dung và sửa đổi liên kết chuyển hướng."""
-    content_bytes = _load_page_content(filename)
-    
-    if content_bytes is None:
-        return b"<h1>Error: Content not loaded. Check server logs.</h1>"
-    
-    # Chuyển đổi sang string để thao tác chuỗi
-    original_content_str = content_bytes.decode('utf-8')
-    
-    # 🔑 THAO TÁC GHÉP CHUỖI VÀ SỬA LỖI CHUYỂN HƯỚNG
-    modified_content_str = original_content_str.replace(
-        'href="login.html"',
-        f'href="{serverurl}/login.html"'
-    )
-    
-    # Trả về dưới dạng bytes để gán trực tiếp vào response.body
-    return modified_content_str.encode('utf-8')
-# Trong start_sampleapp.py (Sau các định nghĩa STORE)
-
-INDEX_PAGE = _load_page_content("index.html")
-LOGIN_PAGE = _load_page_content("login.html")
-UNAUTHORIZED_PAGE = _load_page_content("unauthorize.html")
-
 
 def check_authentication(request, response, adapter):
     """Kiểm tra session_id trong Cookie và trả về username."""
@@ -261,11 +267,16 @@ def submit_info_route(request, response, adapter):
         return 
     session_id = request.cookies.split("=",1)[1]
 
-    body_params = parse_body_params(request.body)
+    body_params = parse_body_params(request.body,'json')
     ip = body_params.get('peer_ip')
     p2p_port = body_params.get('peer_port')
     username = body_params.get('username')
 
+    if lookup(username) is not None:
+        response.status_code = 400
+        response.reason = b'{"Username have been taken"}'
+        response.headers['Content-Type'] = 'application/json'
+        return
     if not ip or not p2p_port or not username:
         response.status_code = 400
         response.reason = b'{"Missing IP or P2P port in body or username"}'
@@ -297,15 +308,25 @@ def add_list_route(request, response, adapter):
     """
     Channel Listing/Join: Tham gia/Tạo một Kênh.
     """
-    session_id = request.cookies
+    cookies = request.cookies
+    session_id = cookies.split('=',1)[1]
     if check_authentication(request, response, adapter) is None:
         return
     with STATE_LOCK:
         if SESSION_STORE[session_id]["status"] == "online":
-            CHANNEL_STORE["global_chat"][[SESSION_STORE[session_id]["username"]]] =  {}
-            CHANNEL_STORE["global_chat"][[SESSION_STORE[session_id]["username"]]]["ip"] = SESSION_STORE[session_id]["ip"]
-            CHANNEL_STORE["global_chat"][[SESSION_STORE[session_id]["username"]]]["port"] = SESSION_STORE[session_id]["p2p_port"]
-
+            if session_id not in CHANNEL_STORE["global_chat"]:
+                CHANNEL_STORE["global_chat"] += [session_id]
+        else: 
+            SESSION_STORE[session_id]["status"] = "online"
+            if session_id not in CHANNEL_STORE["global_chat"]:
+                CHANNEL_STORE["global_chat"] += [session_id]
+    with STATE_LOCK:
+        session_data = SESSION_STORE[session_id]
+        username = session_data['username']
+        ip = session_data['ip']
+        p2p_port = session_data['p2p_port']
+    start_process('start_sampleapp.py', ip, p2p_port, f"peer_client {username}", session_id)
+    
 
 @app.route('/get-list', methods=['GET'])
 def get_list_route(request, response, adapter):
@@ -325,11 +346,13 @@ def get_list_route(request, response, adapter):
     """
     if check_authentication(request, response, adapter) is None:
         return 
-    peer_tuples = handle_get_peer_list() # <--- NHẬN DỮ LIỆU TUPLE TẠI ĐÂY
+    cookies = request.cookies
+    session_id = cookies.split('=',1)[1]
+    peer_tuples = handle_get_peer_list(session_id)
     peer_data_list = []
     for peer in peer_tuples:
         peer_data_list.append({
-            "username": peer[0], "ip": peer[1], "p2p_port": peer[2], "status": peer[3]
+            "username": peer[0], "ip": peer[1], "p2p_port": peer[2], "status": peer[3], "isConnected": peer[4]
         })
     
     json_string = json.dumps(peer_data_list)
@@ -337,8 +360,49 @@ def get_list_route(request, response, adapter):
     response.headers['Content-Type'] = 'application/json'
     response.setbody(response_body_bytes)
     print(peer_tuples)
-    
 
+@app.route('/connect-peer', methods=['POST'])
+def connect_peer_route(request, response, adapter):
+    if check_authentication(request, response, adapter) is None:
+        return 
+    body_params = parse_body_params(request.body,'json')
+    t_ip = body_params.get('ip')
+    t_p2p_port = body_params.get('port')
+    target_username = body_params.get('username')
+    print(target_username)
+
+    
+    cookies = request.cookies
+    session_id = cookies.split("=",1)[1]
+    with STATE_LOCK:
+        session_data = SESSION_STORE[session_id]
+        source_username = session_data.get('username')
+        ip = session_data.get('ip')
+        p2p_port = session_data.get('p2p_port')
+    if source_username == target_username:
+        response.status_code = 400
+        response.headers['Content-Type'] = 'application/json'
+        message = build_error_response_json_bytes(400, "Cannot connect to your self")
+        response.setbody(message)
+    else:
+        target_sessionid = lookup(target_username)
+        with STATE_LOCK:
+            channel = CHANNEL_STORE.get(session_id)
+            if channel is None:
+                CHANNEL_STORE[session_id] = [target_sessionid]
+            elif target_sessionid in channel:
+                response.status_code = 409
+                response.headers['Content-Type'] = 'application/json'
+                message = build_error_response_json_bytes(409, "Already in connection")
+                response.setbody(message)
+            else:  
+                CHANNEL_STORE[session_id] += [target_sessionid]
+                response.reason = "OK"
+                response.status_code = 200
+                response.headers['Content-Type'] = 'application/json'
+                response.setbody(build_error_response_json_bytes(200, "Ongoing"))
+    return
+            
 @app.route('/connect-peer', methods=['GET'])
 def connect_peer_route(request, response, adapter):
     """
@@ -347,32 +411,8 @@ def connect_peer_route(request, response, adapter):
     Yêu cầu query param: ?session_id=<target_session_id>
     """
     if check_authentication(request, response, adapter) is None:
-        return 
-    
-    # Giả định request.url_params chứa query parameters (ví dụ: ?session_id=...)
-    target_sid = request.url_params.get('session_id') if hasattr(request, 'url_params') else None
-    
-    if not target_sid:
-        response.status_code = 400
-        response.body = b'{"error": "Missing session_id query parameter"}'
-        response.headers['Content-Type'] = 'application/json'
         return
-
-    with STATE_LOCK:
-        peer = SESSION_STORE.get(target_sid)
-
-    if peer and peer.get('ip') and peer.get('p2p_port') and peer.get('status') == 'online':
-        response.status_code = 200
-        response.body = json.dumps({
-            "username": peer['username'],
-            "ip": peer['ip'],
-            "port": peer['p2p_port']
-        }).encode('utf-8')
-        response.headers['Content-Type'] = 'application/json'
-    else:
-        response.status_code = 404
-        response.body = b'{"error": "Peer not found or P2P info missing"}'
-        response.headers['Content-Type'] = 'application/json'
+    
 
 # =========================================================
 # 💬 ROUTE HANDLERS: DUMMY P2P ACKNOWLEDGEMENT
@@ -389,6 +429,13 @@ def broadcast_peer_route(request, response, adapter):
     response.body = b'{"status": "P2P Broadcast Acknowledged by Control Plane"}'
     response.headers['Content-Type'] = 'application/json'
 
+@app.route('/send-peer', methods=['GET'])
+def send_peer_route(request, response, adapter):
+    """kiểm tra và push chat ui lên"""
+    if check_authentication(request, response, adapter) is None:
+        return
+    
+
 @app.route('/send-peer', methods=['POST'])
 def send_peer_route(request, response, adapter):
     """Dummy Route: Thông báo Server rằng Client đang gửi tin nhắn trực tiếp (P2P)."""
@@ -399,6 +446,9 @@ def send_peer_route(request, response, adapter):
     response.body = b'{"status": "P2P Direct Send Acknowledged by Control Plane"}'
     response.headers['Content-Type'] = 'application/json'
 
+
+
+"""dummy route"""
 @app.route('/hello', methods=['PUT'])
 def hello(headers, body):
     """

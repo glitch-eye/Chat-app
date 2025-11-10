@@ -215,6 +215,8 @@ class Response():
             filepath = os.path.join("www/", "/add-list.html".lstrip('/'))
         elif path == "/get-list/" :
             filepath = os.path.join("www/", "/get-list.html".lstrip('/'))
+        elif path == "/send-peer/" :
+            filepath = os.path.join("www/", "/chat.html".lstrip('/'))
         else:
             filepath = os.path.join(base_dir, path.lstrip('/'))
         
@@ -288,9 +290,6 @@ class Response():
                 headers["Content-Length"] = "{}".format(len(self._content))
             elif request.path == "/login" and request.method == "POST":
                 c_len, self._content = self.build_content("/submit-info.html", BASE_DIR + "www/")
-                headers["Content-Length"] = "{}".format(len(self._content))
-            elif request.path == "/submit-info/" and request.method == "POST":
-                c_len, self._content = self.build_content("/add-list.html", BASE_DIR + "www/")
                 headers["Content-Length"] = "{}".format(len(self._content))
         else:
             c_len, self._content = self.build_content("/unauthorize.html", BASE_DIR + "www/")

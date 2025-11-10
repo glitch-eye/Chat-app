@@ -25,26 +25,46 @@ from .request import Request
 from .response import Response
 from .dictionary import CaseInsensitiveDict
 import base64
-
+from urllib.parse import unquote_plus
+import json
 
 
 def get_base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 # Giữ lại _parse_body_params để các Route Handler có thể gọi
-def parse_body_params(body_bytes):
-    """Phân tích body POST (x-www-form-urlencoded) từ bytes."""
+def parse_body_params(body_bytes, content_type='url'):
+    """
+    mặc định url
+    json thì thêm kiểu json vào
+    """
     params = {}
-    if not body_bytes: return params
+    if not body_bytes: 
+        return params
+        
     try:
         body_str = body_bytes.decode('utf-8')
-        for pair in body_str.split('&'):
-            if '=' in pair:
-                k, v = pair.split('=', 1)
-                params[k.strip()] = v.strip() 
-    except:
-        pass
-    return params
+        
+        # 🎯 TRƯỜNG HỢP 1: Xử lý JSON (Được sử dụng trong các ví dụ trước)
+        if 'json' in content_type:
+            # json.loads() sẽ trả về một dictionary Python
+            return json.loads(body_str)
+            
+        # 🎯 TRƯỜNG HỢP 2: Xử lý x-www-form-urlencoded (Cải thiện hàm gốc)
+        elif 'url' in content_type:
+            for pair in body_str.split('&'):
+                if '=' in pair:
+                    k, v = pair.split('=', 1)
+                    # Quan trọng: Dùng unquote_plus để giải mã ký tự URL (như khoảng trắng thành + hoặc %20)
+                    params[unquote_plus(k).strip()] = unquote_plus(v).strip()
+            return params
+
+    except json.JSONDecodeError:
+        print("Lỗi: Không thể phân tích cú pháp JSON.")
+    except Exception as e:
+        print(f"Lỗi phân tích body: {e}")
+        
+    return {}
 
 def get_encoding_from_headers(headers):
     """Giả lập hàm tìm kiếm encoding từ Content-Type header."""
