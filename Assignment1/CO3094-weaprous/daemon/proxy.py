@@ -160,7 +160,7 @@ def handle_client(ip, port, conn, addr, routes):
     :params routes (dict): dictionary mapping hostnames and location.
     """
 
-    request = conn.recv(1024).decode(errors='ignore')
+    request = conn.recv(4096).decode(errors='ignore')
 
     # Extract hostname
     print(request)

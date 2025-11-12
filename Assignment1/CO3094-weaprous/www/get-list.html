@@ -77,8 +77,17 @@
             font-size: 13px;
         }
         /* CSS cho nút Chat */
-        .connect-button[data-status="connected"] {
-            background-color: #6f42c1; /* Màu Tím cho Chat */
+        .chat-tracker-button {
+            background-color: #6f42c1; /* Màu Tím cho Chat Tracker */
+            color: white;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+        .chat-direct-button {
+            background-color: #00a8a8; /* Màu xanh ngọc cho Direct Chat */
+            color: white;
+            padding: 6px 12px;
+            font-size: 13px;
         }
         
         #log-output {
@@ -147,6 +156,9 @@
         // 🎯 BIẾN LƯU TRỮ DỮ LIỆU GỐC 🎯
         let currentPeerData = [];
         const logOutputDiv = document.getElementById('log-output');
+        
+        // Giả sử URL Server là 4000 (dựa trên các cuộc trao đổi trước)
+        const SERVER_URL = 'http://127.0.0.1:4000';
 
         function logStatus(message, type = 'info') {
             const statusMsg = document.createElement('p');
@@ -170,8 +182,10 @@
             }
         }
 
+        // --- HÀM 1: KHỞI TẠO KẾT NỐI (Connect) ---
         function initiateConnection(targetIp, targetPort, targetUsername) {
             
+            // Đường dẫn API để gửi yêu cầu kết nối
             const connectUrl = '/connect-peer/'; 
             
             const requestBody = {
@@ -193,10 +207,9 @@
                 
                 let logMessage = '';
 
-                if (response.ok) { // Status 200-299: Thành công
+                if (response.ok) { 
                     logMessage = `Tracker đã ghi nhận thành công. Peer B (${targetUsername}) đã phản hồi (Status ${response.status}).`;
                     logStatus(logMessage, 'success');
-                    // Tải lại toàn bộ danh sách để cập nhật trạng thái
                     fetchPeerList(); 
                     return; 
                 } 
@@ -225,6 +238,62 @@
             });
         }
         
+        // --- HÀM 2: GỬI YÊU CẦU CHAT (Send) ---
+        function sendMessageToPeer(targetIp, targetPort, targetUsername) {
+            
+            // Đường dẫn API để gửi yêu cầu Chat
+            const sendUrl = '/send-peer/'; 
+            
+            const requestBody = {
+                'ip': targetIp,       
+                'port': targetPort,
+                'username': targetUsername 
+            };
+
+            logStatus(`Đang gửi yêu cầu khởi tạo/mở Chat với ${targetUsername} (${targetIp}:${targetPort}) qua Tracker...`, 'info');
+            
+            fetch(sendUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json' 
+                },
+                body: JSON.stringify(requestBody) 
+            })
+            .then(async response => {
+                
+                let logMessage = '';
+
+                if (response.ok) { 
+                    logMessage = `Yêu cầu Chat đã được gửi thành công đến Tracker. Mở giao diện Chat...`;
+                    logStatus(logMessage, 'success');
+                    
+                    // Mở cửa sổ chat WebRTC (sử dụng /chat.html)
+                    window.open(`/chat.html?target=${targetUsername}`, `chat_${targetUsername}`);
+                    return; 
+                } 
+                
+                logMessage = `Lỗi Tracker: Không thể gửi yêu cầu Chat. Status: ${response.status}.`;
+                
+                try {
+                    const errorData = await response.json();
+                    const serverMessage = errorData.message || errorData.error;
+                    
+                    if (serverMessage) {
+                        logMessage = `Lỗi (${response.status}): ${serverMessage}`;
+                    }
+                } catch (e) {
+                    logMessage += " (Không nhận được phản hồi lỗi JSON)";
+                }
+                
+                logStatus(logMessage, 'error');
+
+            })
+            .catch(error => {
+                logStatus(`Lỗi mạng/Hệ thống: Không thể kết nối với Tracker Server.`, 'error');
+                console.error('Lỗi mạng fetch:', error);
+            });
+        }
+        
         // 🎯 HÀM MỚI: HIỂN THỊ DANH SÁCH DỰA TRÊN DỮ LIỆU ĐÃ LỌC 🎯
         function displayPeerList(data) {
             const tbody = document.getElementById('peer-table').getElementsByTagName('tbody')[0];
@@ -233,6 +302,7 @@
             
             // Lọc dữ liệu
             const filteredData = data.filter(peer => {
+                // Giả định dữ liệu từ Tracker có trường 'isConnected'
                 const isConnected = peer.isConnected || false; 
                 
                 if (filterValue === 'connected') {
@@ -259,30 +329,56 @@
 
                 const actionCell = row.insertCell();
                 
-                const actionBtn = document.createElement('button');
-                
-                const isConnected = peer.isConnected || false; 
+                const isConnected = peer.isConnected || false;
                 
                 if (isConnected) {
-                    actionBtn.textContent = 'Chat';
-                    actionBtn.className = 'connect-button'; 
-                    actionBtn.setAttribute('data-status', 'connected'); // Dùng cho CSS
+                    // --- NÚT CHAT (Đã kết nối) ---
                     
-                    actionBtn.onclick = function() {
-                        logStatus(`Mở cửa sổ Chat với ${peer[0]}... (Logic chưa được triển khai)`, 'info');
+                    // Nút 1: POST qua Tracker (Logic cũ)
+                    const chatTrackerBtn = document.createElement('button');
+                    chatTrackerBtn.textContent = 'Chat (Tracker)';
+                    chatTrackerBtn.className = 'action-button chat-tracker-button'; 
+                    chatTrackerBtn.style.marginRight = '5px';
+                    chatTrackerBtn.onclick = function() {
+                        logStatus(`[Tracker POST] Khởi tạo Chat WebRTC qua Tracker với ${peer.username}...`, 'info');
+                        // Hàm này mở cửa sổ chat WebRTC
+                        sendMessageToPeer(peer.ip, peer.p2p_port, peer.username);
                     };
+                    
+                    // Nút 2: GET TRỰC TIẾP (Theo yêu cầu)
+                    const directChatBtn = document.createElement('a');
+                    directChatBtn.textContent = 'Direct Chat (GET)';
+                    directChatBtn.className = 'action-button chat-direct-button';
+                    
+                    // 🎯 URL TRỰC TIẾP ĐẾN GIAO DIỆN CHAT 🎯
+                    // Vì bạn đã truy cập qua 4000, chúng ta sẽ mở /chat.html kèm theo query target
+                    const targetUrl = `/chat.html?target=${peer.username}`;
+                    
+                    directChatBtn.onclick = function(e) {
+                        e.preventDefault(); 
+                        logStatus(`[Direct GET] Đang mở cửa sổ Chat trực tiếp với ${peer.username}...`, 'info');
+                        window.open(targetUrl, `chat_${peer.username}`); 
+                    };
+                    directChatBtn.href = targetUrl; 
+
+                    actionCell.appendChild(chatTrackerBtn);
+                    actionCell.appendChild(directChatBtn); 
 
                 } else {
-                    actionBtn.textContent = 'Connect';
-                    actionBtn.className = 'connect-button';
-                    actionBtn.setAttribute('data-status', 'not-connected'); // Dùng cho CSS
+                    // --- NÚT CONNECT (Chưa kết nối) ---
+                    const connectBtn = document.createElement('button');
+                    connectBtn.textContent = 'Connect';
+                    connectBtn.className = 'connect-button';
+                    connectBtn.setAttribute('data-status', 'not-connected');
                     
-                    actionBtn.onclick = function() {
-                        initiateConnection(peer[1], peer[2], peer[0]);
+                    connectBtn.onclick = function() {
+                        initiateConnection(peer.ip, peer.p2p_port, peer.username);
                     };
+                    
+                    actionCell.appendChild(connectBtn);
                 }
                 
-                actionCell.appendChild(actionBtn);
+                // *** ĐÃ XÓA DÒNG LỖI actionCell.appendChild(actionBtn); ***
             });
         }
 
@@ -294,6 +390,7 @@
             fetch('/list/') 
                 .then(response => {
                     if (response.status === 401) {
+                        logStatus('Phiên đã hết hạn, đang chuyển hướng đến Login.', 'error');
                         window.location.href = '/login.html'; 
                         return null;
                     }
@@ -305,7 +402,6 @@
                 .then(data => {
                     if (!data) return; 
                     
-                    // 🎯 LƯU DỮ LIỆU GỐC VÀ GỌI HÀM HIỂN THỊ 🎯
                     currentPeerData = data; 
                     displayPeerList(currentPeerData);
                 })

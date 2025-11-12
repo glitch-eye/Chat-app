@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Danh sách Peers Đã Kết Nối</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 30px; 
+            background-color: #f4f7f9;
+            color: #333;
+        }
+        h1 {
+            color: #007bff;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        
+        #table-container { 
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background-color: white;
+            border-radius: 5px;
+        }
+
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+        }
+        th, td { 
+            border: 1px solid #e0e0e0; 
+            padding: 12px 15px; 
+            text-align: left; 
+        }
+        th { 
+            background-color: #007bff; 
+            color: white;
+            text-transform: uppercase;
+            font-size: 14px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .action-button {
+            padding: 8px 15px;
+            margin-right: 10px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+            transition: background-color 0.3s ease;
+        }
+        .reload-button {
+            background-color: #007bff;
+            color: white;
+        }
+        .home-button {
+            background-color: #6c757d;
+            color: white;
+        }
+        .chat-server-button { /* Style mới cho nút Chat */
+            background-color: #6f42c1; 
+            color: white;
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+        
+        #log-output {
+            margin-top: 30px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            max-height: 200px;
+            overflow-y: auto;
+            border-radius: 5px;
+        }
+        .log-error { color: #dc3545; font-weight: bold; }
+        .log-success { color: #28a745; }
+        .log-entry { margin: 5px 0; padding-bottom: 2px; border-bottom: 1px dotted #eee; }
+    </style>
+</head>
+<body>
+    <h1>Danh sách Peers Đã Kết Nối (Sẵn sàng Chat)</h1>
+    
+    <div style="margin-bottom: 20px; display: flex; align-items: center;">
+        <button onclick="fetchPeerList()" class="action-button reload-button">Tải lại danh sách</button>
+        <a href="/" class="action-button home-button">Quay về Trang chủ</a>
+    </div>
+
+    <div id="table-container">
+        <table id="peer-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>IP Address</th>
+                    <th>P2P Port</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                </tbody>
+        </table>
+    </div>
+    
+    <p id="status-message"></p>
+    
+    <h2>📜 Log Sự kiện</h2>
+    <div id="log-output"></div>
+
+    <script>
+        // 🎯 BIẾN LƯU TRỮ DỮ LIỆU GỐC 🎯
+        let currentPeerData = [];
+        const logOutputDiv = document.getElementById('log-output');
+
+        function logStatus(message, type = 'info') {
+            const statusMsg = document.createElement('p');
+            statusMsg.className = 'log-entry';
+            
+            let emoji = 'ℹ️';
+            if (type === 'error') {
+                statusMsg.classList.add('log-error');
+                emoji = '❌';
+            } else if (type === 'success') {
+                statusMsg.classList.add('log-success');
+                emoji = '✅';
+            }
+
+            statusMsg.textContent = `[${new Date().toLocaleTimeString()}] ${emoji} ${message}`;
+            
+            if (logOutputDiv.firstChild) {
+                logOutputDiv.insertBefore(statusMsg, logOutputDiv.firstChild);
+            } else {
+                logOutputDiv.appendChild(statusMsg);
+            }
+        }
+
+        // --- HÀM PLACEHOLDER (KHÔNG CẦN DÙNG TRONG UI NÀY) ---
+        function initiateConnection() { logStatus('Connect logic bị bỏ qua.', 'info'); }
+        function sendMessageToPeer() { logStatus('Tracker POST logic bị bỏ qua.', 'info'); }
+        // --------------------------------------------------------
+        
+        // 🎯 HÀM CHÍNH: HIỂN THỊ DANH SÁCH 🎯
+        function displayPeerList(data) {
+            const tbody = document.getElementById('peer-table').getElementsByTagName('tbody')[0];
+            tbody.innerHTML = '';
+            
+            // LỌC DỮ LIỆU: CHỈ GIỮ LẠI CÁC PEER ĐÃ KẾT NỐI (isConnected = true)
+            const filteredData = data.filter(peer => peer.isConnected === true);
+            
+            const statusMsg = document.getElementById('status-message');
+            statusMsg.textContent = `Hiển thị ${filteredData.length} Peer đã kết nối (Tổng: ${currentPeerData.length}).`;
+
+            filteredData.forEach(peer => {
+                const row = tbody.insertRow();
+                
+                // Lấy thông tin Peer
+                const peerIp = peer.ip;
+                const peerPort = peer.p2p_port;
+                const peerUsername = peer.username;
+                
+                row.insertCell().textContent = peerUsername; 
+                row.insertCell().textContent = peerIp; 
+                row.insertCell().textContent = peerPort; 
+
+                const actionCell = row.insertCell();
+                
+                // 🎯 NÚT CHUYỂN HƯỚNG ĐẾN SERVER ROUTE 🎯
+                const chatServerLink = document.createElement('a');
+                chatServerLink.textContent = 'Chat';
+                chatServerLink.className = 'action-button chat-server-button';
+                
+                // TẠO QUERY STRING CHỨA IP VÀ PORT PEER ĐÍCH
+                // Ví dụ: /chat/?ip=192.168.1.10&port=8001&username=Alice
+                const queryString = `ip=${peerIp}&port=${peerPort}&username=${peerUsername}`;
+                
+                chatServerLink.href = `/send-peer/?${queryString}`;
+                
+                chatServerLink.onclick = function() {
+                    logStatus(`Đang chuyển hướng đến /send-peer/ để mở giao diện Chat với ${peerUsername}...`, 'info');
+                };
+
+                actionCell.appendChild(chatServerLink);
+            });
+        }
+
+
+        function fetchPeerList() {
+            const statusMsg = document.getElementById('status-message');
+            statusMsg.textContent = 'Đang tải...';
+
+            fetch('/list/') 
+                .then(response => {
+                    if (response.status === 401) {
+                        window.location.href = '/'; 
+                        return null;
+                    }
+                    if (!response.ok) {
+                        throw new Error('Lỗi tải danh sách Peer');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data) return; 
+                    
+                    currentPeerData = data; 
+                    displayPeerList(currentPeerData);
+                })
+                .catch(error => {
+                    console.error('Lỗi khi tải Peer List:', error);
+                    statusMsg.textContent = `Lỗi: Không thể tải danh sách từ Tracker. (${error.message})`;
+                });
+        }
+
+        document.addEventListener('DOMContentLoaded', fetchPeerList);
+    </script>
+</body>
+</html>

@@ -47,6 +47,9 @@ def parse_body_params(body_bytes, content_type='url'):
         
         # 🎯 TRƯỜNG HỢP 1: Xử lý JSON (Được sử dụng trong các ví dụ trước)
         if 'json' in content_type:
+            print(f"--- Dữ liệu JSON thô nhận được ---")
+            print(body_str)
+            print(f"------------------------------------")
             # json.loads() sẽ trả về một dictionary Python
             return json.loads(body_str)
             
@@ -172,7 +175,7 @@ class HttpAdapter:
 
         # Handle the request
         try :
-            msg = conn.recv(1024).decode('utf-8')
+            msg = conn.recv(4096).decode('utf-8')
         except UnicodeDecodeError:
             # Xử lý nếu client gửi dữ liệu không phải utf-8
             print("[HttpAdapter] Error decoding request.")
@@ -201,7 +204,7 @@ class HttpAdapter:
                 resp.status_code = 500
                 resp.reason = "Internal Server Error"
             if req.hook._route_path == "/login" and req.hook._route_methods == "POST":
-                if req.cookies is not "":
+                if req.cookies != "":
                     sessionid = req.cookies.split("=",1)[1]
 
             is_handled = True

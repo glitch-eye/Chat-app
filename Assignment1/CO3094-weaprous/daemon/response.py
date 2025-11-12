@@ -24,7 +24,7 @@ import datetime
 import os
 import mimetypes
 from .dictionary import CaseInsensitiveDict
-
+import json
 
 BASE_DIR = ""
 
@@ -217,6 +217,10 @@ class Response():
             filepath = os.path.join("www/", "/get-list.html".lstrip('/'))
         elif path == "/send-peer/" :
             filepath = os.path.join("www/", "/chat.html".lstrip('/'))
+        elif path == "/connect-peer/" :
+            filepath = os.path.join("www/", "/channels.html".lstrip('/'))
+        elif path == "/" :
+            filepath = os.path.join("www/", "/index.html".lstrip('/'))
         else:
             filepath = os.path.join(base_dir, path.lstrip('/'))
         
@@ -331,7 +335,7 @@ class Response():
         :rtype bytes: Encoded 404 response.
         """
 
-        return (
+        return json.dumps(
                 "HTTP/1.1 404 Not Found\r\n"
                 "Accept-Ranges: bytes\r\n"
                 "Content-Type: text/html\r\n"
@@ -343,6 +347,7 @@ class Response():
             ).encode('utf-8')
 
 
+    # Vui lòng thay thế toàn bộ hàm build_response bằng code này
     def build_response(self, request):
         """
         Builds a full HTTP response including headers and content based on the request.
@@ -351,6 +356,13 @@ class Response():
 
         :rtype bytes: complete HTTP response using prepared headers and content.
         """
+        if self._content_loaded == True: 
+            # Chỉ cần xây dựng header và trả về nội dung đã chuẩn bị
+            self._header = self.build_response_header(request)
+            print(self._header + self._content)
+            return self._header + self._content
+        # ------------------------------------------------------------------
+        
         path = request.path
 
         mime_type = self.get_mime_type(path)
@@ -363,9 +375,6 @@ class Response():
             base_dir = self.prepare_content_type(mime_type = 'text/html')
         elif mime_type == 'text/css':
             base_dir = self.prepare_content_type(mime_type = 'text/css')
-        #
-        # TODO: add support objects
-        #
         elif mime_type.startswith('image/'):
             base_dir = self.prepare_content_type(mime_type=mime_type)
         elif mime_type.startswith('application/'):
@@ -375,10 +384,18 @@ class Response():
         elif mime_type.startswith('audio/'):
             base_dir = self.prepare_content_type(mime_type=mime_type)
         else:
+            # Nếu không phải API và không phải file tĩnh (ví dụ: /webrtc/offer)
+            # DÙNG 404 CŨNG ĐƯỢC, NHƯNG NÓ PHẢI LÀ API.
+            # Tốt nhất là không đến được đây nếu route đã được xử lý bằng hook
+            print("[Response] Serving path {} as 404 - Not a recognized file type.".format(path))
+            return self.build_notfound() 
+            
+        # Nếu là file tĩnh, hãy tải nó (logic build_content cũ)
+        c_len, self._content = self.build_content(path, base_dir) 
+        
+        # Nếu tải file tĩnh thất bại (c_len == 0), trả về 404
+        if c_len == 0 :
             return self.build_notfound()
-        if self._content_loaded:
-            self._header = self.build_response_header(request)
-            return self._header + self._content
-        c_len, self._content = self.build_content(path, base_dir)
+
         self._header = self.build_response_header(request)
         return self._header + self._content

@@ -60,7 +60,7 @@
             formData.forEach((value, key) => data[key] = value);
 
             try {
-                const response = await fetch('/submit-info', {
+                const response = await fetch('/submit-info/', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
