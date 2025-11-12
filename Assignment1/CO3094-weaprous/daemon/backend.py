@@ -49,7 +49,7 @@ from .httpadapter import HttpAdapter
 from .dictionary import CaseInsensitiveDict
 
 CHANNEL_STORE = {
-    'global_chat': {} 
+    'global_chat': []
 }
 SESSION_STORE = {}
 """
@@ -73,11 +73,7 @@ def handle_client(ip, port, conn, addr, routes):
     daemon = HttpAdapter(ip, port, conn, addr, routes)
 
     # Handle client
-    sessionid = daemon.handle_client(conn, addr, routes)
-    if sessionid is not None:
-        with STATE_LOCK:
-            SESSION_STORE[sessionid]["ip"] = addr[0]
-            SESSION_STORE[sessionid]["p2p_port"] = addr[0]
+    daemon.handle_client(conn, addr, routes)
 
 def run_backend(ip, port, routes):
     """

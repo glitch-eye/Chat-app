@@ -11,13 +11,16 @@
         label { display: block; margin-top: 10px; font-weight: bold; }
         input[type="text"] { width: 95%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 3px; }
         input[type="submit"] { padding: 10px 15px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        #message { margin-top: 10px; padding: 5px; border: 1px solid transparent; }
+        .error { color: #cc0000; border-color: #fdd; background-color: #ffe0e0; }
+        .success { color: #008000; border-color: #dfd; background-color: #e0ffe0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>🔗 Đăng ký Thông tin Peer</h2>
         
-        <form method="POST" action="/submit-info/">
+        <form id="peer-register-form">
             
             <label for="username">Tên người dùng (Username):</label>
             <input type="text" id="username" name="username" required 
@@ -29,14 +32,79 @@
             
             <label for="peer_port">Cổng (Port):</label>
             <input type="text" id="peer_port" name="peer_port" required 
-                   placeholder="Ví dụ: 8000">
+                   placeholder="Ví dụ: 8001">
             
             <input type="submit" value="Đăng ký Peer">
         </form>
         
+        <div id="message"></div>
+        
         <p style="font-size: 0.8em; margin-top: 20px;">
-            *Dữ liệu sẽ được gửi đến API <code>/submit-info/</code> qua phương thức **POST**.
+            *Thành công sẽ chuyển hướng đến <code>/add-list</code>.
         </p>
     </div>
+
+    <script>
+        const form = document.getElementById('peer-register-form');
+        const messageDiv = document.getElementById('message');
+        const submitButton = form.querySelector('input[type="submit"]');
+
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault(); 
+            messageDiv.textContent = '';
+            messageDiv.className = '';
+            submitButton.disabled = true;
+
+            const formData = new FormData(form);
+            const data = {};
+            formData.forEach((value, key) => data[key] = value);
+
+            try {
+                const response = await fetch('/submit-info/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (response.status === 200) {
+                    // ✅ THÀNH CÔNG: Chuyển hướng đến /add-list
+                    messageDiv.textContent = '✅ Đăng ký thành công! Đang kích hoạt Peer Client...';
+                    messageDiv.className = 'success';
+                    
+                    // Chạy GET /add-list/
+                    setTimeout(() => {
+                        window.location.href = '/add-list/'; 
+                    }, 500); // Chuyển hướng sau 0.5 giây
+                    
+                } else {
+                    // ❌ LỖI: Hiển thị lỗi
+                    const statusText = response.statusText || 'Lỗi Server';
+                    let errorDetails = `Lỗi ${response.status} (${statusText}).`;
+                    
+                    try {
+                        const errorData = await response.json();
+                        errorDetails = errorData.message || errorDetails;
+                    } catch (e) {
+                        // Không làm gì nếu body không phải JSON
+                    }
+
+                    messageDiv.textContent = `❌ Đăng ký thất bại: ${errorDetails}`;
+                    messageDiv.className = 'error';
+                }
+
+            } catch (error) {
+                // Lỗi mạng hoặc lỗi kết nối
+                messageDiv.textContent = '❌ Lỗi kết nối mạng.';
+                messageDiv.className = 'error';
+            } finally {
+                // Chỉ reset nút nếu không phải là trạng thái thành công 200
+                if (response.status !== 200) {
+                    submitButton.disabled = false;
+                }
+            }
+        });
+    </script>
 </body>
 </html>

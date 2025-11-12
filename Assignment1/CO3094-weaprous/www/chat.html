@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC P2P Chat</title>
+    <!-- Tải Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Thiết lập font Inter -->
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f9; }
+        /* Cuộn tin nhắn ở dưới cùng */
+        #chat-window { max-height: 400px; overflow-y: auto; scroll-behavior: smooth; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-4xl bg-white shadow-2xl rounded-xl overflow-hidden">
+        <header class="bg-indigo-600 text-white p-4 flex justify-between items-center rounded-t-xl">
+            <h1 class="text-2xl font-bold">WebRTC P2P Chat</h1>
+            <div id="user-info" class="text-sm font-medium">Đang tải...</div>
+        </header>
+
+        <div class="flex flex-col md:flex-row">
+            <!-- Cột 1: Danh sách Peer và Kết nối -->
+            <div class="md:w-1/3 border-r p-4 bg-gray-50">
+                <h2 class="text-lg font-semibold mb-3 text-indigo-700">Danh sách Peers</h2>
+                <div id="peer-list" class="space-y-2 max-h-80 overflow-y-auto">
+                    <!-- Peers sẽ được chèn ở đây -->
+                    <div class="text-sm text-gray-500">Đang tải danh sách peers...</div>
+                </div>
+                <button onclick="fetchPeerList()" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded-lg transition duration-200 shadow-md">
+                    Tải lại Danh sách
+                </button>
+            </div>
+
+            <!-- Cột 2: Cửa sổ Chat -->
+            <div class="md:w-2/3 p-4 flex flex-col">
+                <h2 id="chat-title" class="text-xl font-semibold mb-3 text-gray-800">
+                    Chọn Peer để Bắt đầu Chat
+                </h2>
+
+                <div id="chat-status" class="text-sm font-medium text-center py-2 rounded-lg mb-3 shadow-inner bg-yellow-100 text-yellow-800 hidden">
+                    Đang tìm kiếm...
+                </div>
+                
+                <!-- Cửa sổ Tin nhắn -->
+                <div id="chat-window" class="flex-grow p-3 border rounded-lg bg-gray-50 mb-4 shadow-inner">
+                    <!-- Tin nhắn sẽ được chèn ở đây -->
+                </div>
+
+                <!-- Khu vực Nhập Tin nhắn -->
+                <div id="message-input-area" class="flex space-x-3 hidden">
+                    <input type="text" id="message-input" placeholder="Nhập tin nhắn..." 
+                           class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
+                           onkeypress="if(event.key === 'Enter') sendMessage()">
+                    <button onclick="sendMessage()" 
+                            class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-lg transition duration-200 shadow-lg">
+                        Gửi
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Logic -->
+    <script>
+        // CẤU HÌNH GLOBAL
+        const SERVER_URL = 'http://127.0.0.1:4000'; 
+    
+        // KHAI BÁO LẠI VÀ CHẮC CHẮN CÚ PHÁP MẢNG LÀ CHÍNH XÁC
+        const ICE_SERVERS = [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            // Public STUN server alternatives
+            { urls: 'stun:stun.ekiga.net' },
+            { urls: 'stun:stunserver.org' },
+            
+            // TURN server 1 (Openrelay - phổ biến)
+            {
+                urls: 'turn:openrelay.metered.ca:80',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+            {
+                urls: 'turn:openrelay.metered.ca:443',
+                username: 'openrelayproject',
+                credential: 'openrelayproject'
+            },
+        ]; 
+        
+
+        // TRẠNG THÁI ỨNG DỤNG
+        let currentUsername = null;
+        let targetUsername = null;
+        let rtcPeerConnection = null;
+        let dataChannel = null;
+        let signalingPollingInterval = null;
+        const PEER_TIMEOUT_MS = 1000; // Thời gian polling (1 giây)
+        
+        let isProcessingOffer = false;
+
+
+        // ----------------------------------------------------
+        // I. CÁC HÀM TIỆN ÍCH (AJAX)
+        // ----------------------------------------------------
+
+        // Hàm chung để gửi dữ liệu Signaling đến Tracker (POST)
+        async function sendSignalingData(path, payload) {
+            try {
+                const response = await fetch(SERVER_URL + path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (response.status === 200) {
+                    console.log(`[AJAX Success] POST ${path} thành công. Payload:`, payload);
+                } else {
+                    console.error(`[AJAX Error] POST ${path} thất bại. Status: ${response.status}. Payload:`, payload);
+                }
+                return response;
+            } catch (error) {
+                console.error(`[AJAX Error] Lỗi kết nối gửi tín hiệu đến ${path}:`, error);
+                return null;
+            }
+        }
+
+        // Hàm chung để lấy dữ liệu Signaling từ Tracker (GET)
+        async function getSignalingData(path, targetUser) {
+            try {
+                const response = await fetch(SERVER_URL + `${path}?username=${currentUsername}`);
+                if (response.status === 200) {
+                    return await response.json();
+                }
+                return null;
+            } catch (error) {
+                // Không log lỗi kết nối cho Polling để tránh làm rối console
+                return null;
+            }
+        }
+
+        // Hàm render tin nhắn
+        function appendMessage(sender, message) {
+            const chatWindow = document.getElementById('chat-window');
+            const isSelf = sender === currentUsername;
+            const messageClass = isSelf ? 'text-right' : 'text-left';
+            const bubbleClass = isSelf 
+                ? 'bg-indigo-500 text-white ml-auto rounded-br-none' 
+                : 'bg-gray-200 text-gray-800 mr-auto rounded-tl-none';
+
+            const messageHtml = `
+                <div class="${messageClass} mb-2">
+                    <span class="text-xs text-gray-500">${sender}:</span>
+                    <div class="inline-block p-2 rounded-xl max-w-xs break-words shadow-md ${bubbleClass}">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            chatWindow.insertAdjacentHTML('beforeend', messageHtml);
+            // Cuộn xuống cuối
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function setChatStatus(message, color = 'yellow') {
+            const statusDiv = document.getElementById('chat-status');
+            statusDiv.textContent = message;
+            statusDiv.className = statusDiv.className.split(' ').filter(c => !c.startsWith('bg-') && !c.startsWith('text-')).join(' ');
+            
+            statusDiv.classList.add(`bg-${color}-100`, `text-${color}-800`, 'shadow-inner', 'py-2', 'rounded-lg', 'mb-3');
+            statusDiv.classList.remove('hidden');
+        }
+
+        // ----------------------------------------------------
+        // II. LOGIC WEBRTC
+        // ----------------------------------------------------
+
+        // B1: Khởi tạo RTCPeerConnection (được gọi bởi Initiator và Receiver)
+        function initWebRTC(isInitiator) {
+            if (rtcPeerConnection) rtcPeerConnection.close();
+            
+            // TẠO OBJECT CẤU HÌNH RÕ RÀNG VÀ SỬ DỤNG ICE_SERVERS ĐÃ ĐƯỢC CHẮC CHẮN LÀ MẢNG
+            const rtcConfig = {
+                iceServers: ICE_SERVERS // Đảm bảo đây là một Array of Objects
+            };
+
+            // KHỞI TẠO PEER CONNECTION VỚI CẤU HÌNH ĐÃ SỬA
+            rtcPeerConnection = new RTCPeerConnection(rtcConfig);
+
+            // Xử lý ICE Candidate (Trao đổi địa chỉ mạng)
+            rtcPeerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // Gửi ICE Candidate với cấu trúc Server mong đợi
+                    sendSignalingData('/webrtc/ice', {
+                        username: targetUsername, // Người nhận (Sử dụng key 'username')
+                        payload: {
+                            from_user: currentUsername, // Người gửi
+                            candidate: event.candidate.toJSON() 
+                        } 
+                    });
+                }
+            };
+            
+            // Xử lý kết nối thành công (Callback)
+            rtcPeerConnection.onconnectionstatechange = () => {
+                if (rtcPeerConnection.connectionState === 'connected') {
+                    stopSignalingPolling();
+                    setChatStatus(`ĐÃ KẾT NỐI P2P với ${targetUsername}`, 'green');
+                    document.getElementById('message-input-area').classList.remove('hidden');
+                } else if (rtcPeerConnection.connectionState === 'failed' || rtcPeerConnection.connectionState === 'disconnected') {
+                    setChatStatus(`KẾT NỐI P2P THẤT BẠI. Khởi động lại Polling.`, 'red');
+                    document.getElementById('message-input-area').classList.add('hidden');
+                    startSignalingPolling(); 
+                }
+            };
+
+            if (isInitiator) {
+                // Initiator (Peer A) tạo kênh dữ liệu đi
+                dataChannel = rtcPeerConnection.createDataChannel('chat');
+                setupDataChannel(dataChannel);
+            } else {
+                // Receiver (Peer B) chờ kênh dữ liệu đến (Callback)
+                rtcPeerConnection.ondatachannel = (event) => {
+                    dataChannel = event.channel;
+                    setupDataChannel(dataChannel);
+                };
+            }
+        }
+
+        // Thiết lập sự kiện cho Kênh dữ liệu (Callback)
+        function setupDataChannel(channel) {
+            channel.onopen = () => {
+                setChatStatus(`Kênh dữ liệu ĐÃ MỞ! Bắt đầu chat.`, 'green');
+            };
+            
+            channel.onmessage = (event) => {
+                appendMessage(targetUsername, event.data);
+            };
+
+            channel.onclose = () => {
+                setChatStatus(`Kết nối P2P đã bị đóng.`, 'red');
+                document.getElementById('message-input-area').classList.add('hidden');
+                startSignalingPolling(); 
+            };
+        }
+
+        // B2: Initiator tạo Offer và gửi qua Tracker (Cần await)
+        async function createOffer() {
+            try {
+                console.log('[WebRTC Step 1] Bắt đầu tạo Offer...');
+                // Đợi tạo Offer SDP
+                const offer = await rtcPeerConnection.createOffer();
+                console.log('[WebRTC Step 2] Đã tạo Offer. Bắt đầu setLocalDescription...');
+
+                // Đợi thiết lập Local Description
+                await rtcPeerConnection.setLocalDescription(offer);
+                console.log('[WebRTC Step 3] Đã setLocalDescription thành công. Bắt đầu gửi POST Offer...');
+                
+                // GỬI OFFER VỚI CẤU TRÚC SERVER MONG ĐỢI
+                const postResponse = await sendSignalingData('/webrtc/offer', {
+                    username: targetUsername, // NGƯỜI NHẬN
+                    payload: { 
+                        from_user: currentUsername, // NGƯỜI GỬI
+                        sdp: rtcPeerConnection.localDescription.toJSON() // Dữ liệu SDP
+                    }
+                });
+
+                if (postResponse && postResponse.status === 200) {
+                    console.log('[WebRTC] Gửi Offer SDP thành công.');
+                }
+
+            } catch (error) {
+                // Nếu lỗi xảy ra ở đây, POST sẽ không bao giờ chạy
+                console.error('[WebRTC CRITICAL ERROR] Lỗi tạo hoặc gửi Offer. Không gửi được POST:', error);
+                setChatStatus(`LỖI WebRTC: Không thể tạo Offer. Chi tiết trong Console.`, 'red');
+            }
+        }
+
+        // B3: Receiver tạo Answer và gửi qua Tracker (Cần await)
+        async function createAnswer(offerSdp, fromUser) {
+            try {
+                // Đợi thiết lập Remote Description
+                await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(offerSdp));
+                
+                // Đợi tạo Answer
+                const answer = await rtcPeerConnection.createAnswer();
+                
+                // Đợi thiết lập Local Description
+                await rtcPeerConnection.setLocalDescription(answer);
+                
+                console.log('[WebRTC] Bắt đầu gửi POST Answer...');
+                // GỬI ANSWER VỚI CẤU TRÚC SERVER MONG ĐỢI
+                const postResponse = await sendSignalingData('/webrtc/answer', {
+                    username: fromUser, // NGƯỜI NHẬN (chính là người đã gửi Offer)
+                    payload: { 
+                        from_user: currentUsername, // NGƯỜI GỬI (Peer B)
+                        sdp: rtcPeerConnection.localDescription.toJSON() // Dữ liệu SDP
+                    }
+                });
+
+                if (postResponse && postResponse.status === 200) {
+                    console.log('[WebRTC] Gửi Answer SDP thành công.');
+                }
+                isProcessingOffer = false; 
+
+            } catch (error) {
+                console.error('[WebRTC CRITICAL ERROR] Lỗi tạo hoặc gửi Answer:', error);
+                setChatStatus(`LỖI WebRTC: Không thể tạo Answer. Chi tiết trong Console.`, 'red');
+                isProcessingOffer = false;
+            }
+        }
+
+        // ----------------------------------------------------
+        // III. LOGIC POLLING & PHẢN HỒI TÍN HIỆU
+        // ----------------------------------------------------
+
+        // Hàm xử lý tín hiệu đến (Cần await)
+        async function handleSignalingPolling() {
+            
+            // 1. Kiểm tra Answer (Nếu là Initiator đang chờ)
+            const answerResponse = await getSignalingData('/webrtc/answer', currentUsername);
+            if (answerResponse && answerResponse.sdp) {
+                const signalData = answerResponse.sdp;
+                
+                if (signalData.from_user === targetUsername && signalData.sdp && signalData.sdp.type === 'answer') {
+                    console.log(`[WebRTC] Nhận được Answer SDP từ ${signalData.from_user}.`);
+                    await rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(signalData.sdp));
+                }
+            }
+
+            // 2. Kiểm tra Offer (Nếu là Receiver tiềm năng)
+            if ((!rtcPeerConnection || rtcPeerConnection.connectionState !== 'connected') && !isProcessingOffer) {
+                const offerResponse = await getSignalingData('/webrtc/offer', currentUsername);
+                if (offerResponse && offerResponse.sdp) {
+                    const signalData = offerResponse.sdp;
+                    
+                    if (signalData.from_user && signalData.sdp && signalData.sdp.type === 'offer') {
+                        isProcessingOffer = true; 
+                        const remoteUser = signalData.from_user;
+
+                        console.log(`[WebRTC] Nhận được Offer SDP từ ${remoteUser}. Bắt đầu kết nối.`);
+                        
+                        targetUsername = remoteUser; 
+                        document.getElementById('chat-window').innerHTML = ''; 
+                        document.getElementById('chat-title').textContent = `Chat với ${targetUsername} (Incoming)`;
+                        setChatStatus(`Đã nhận lời mời từ ${targetUsername}. Đang trả lời...`, 'yellow');
+
+                        initWebRTC(false); 
+                        await createAnswer(signalData.sdp, remoteUser); 
+                    }
+                }
+            }
+
+            // 3. Kiểm tra ICE Candidates (Từ cả hai bên)
+            const iceResponse = await getSignalingData('/webrtc/ice', currentUsername);
+            if (iceResponse && Array.isArray(iceResponse.ice_candidates)) {
+                iceResponse.ice_candidates.forEach(async (signalData) => {
+                    if (rtcPeerConnection && rtcPeerConnection.remoteDescription && signalData.candidate) {
+                        try {
+                            await rtcPeerConnection.addIceCandidate(new RTCIceCandidate(signalData.candidate));
+                        } catch (e) {
+                            // Lỗi thường gặp nếu Candidate đến quá sớm
+                        }
+                    }
+                });
+            }
+        }
+
+        // Bắt đầu polling (chạy liên tục để nhận tín hiệu)
+        function startSignalingPolling() {
+            if (signalingPollingInterval) return;
+            console.log(`[Polling] Bắt đầu Polling Signaling mỗi ${PEER_TIMEOUT_MS}ms.`);
+            handleSignalingPolling();
+            signalingPollingInterval = setInterval(handleSignalingPolling, PEER_TIMEOUT_MS);
+        }
+
+        // Dừng polling khi kết nối P2P đã thiết lập
+        function stopSignalingPolling() {
+            if (signalingPollingInterval) {
+                clearInterval(signalingPollingInterval);
+                signalingPollingInterval = null;
+                console.log('[Polling] Đã dừng Polling Signaling.');
+            }
+        }
+
+        // ----------------------------------------------------
+        // IV. LOGIC GIAO DIỆN & CHAT
+        // ----------------------------------------------------
+
+        // Hàm được gọi khi nhấn nút "Kết nối" (Cần await)
+        async function connectToPeer(targetUser) {
+            if (targetUser === currentUsername) {
+                setChatStatus("Không thể chat với chính mình.", 'red');
+                return;
+            }
+            if (rtcPeerConnection && rtcPeerConnection.connectionState === 'connected') {
+                setChatStatus("Đã có kết nối P2P. Vui lòng đóng kết nối cũ.", 'red');
+                return;
+            }
+
+            targetUsername = targetUser;
+            document.getElementById('chat-window').innerHTML = ''; 
+            document.getElementById('chat-title').textContent = `Chat với ${targetUsername} (Đang chờ)`;
+            setChatStatus(`Đang cố gắng kết nối P2P với ${targetUsername}...`, 'yellow');
+
+            // 1. Khởi tạo kết nối WebRTC (Initiator)
+            initWebRTC(true);
+
+            // 2. Gửi Offer và bắt đầu Polling để chờ Answer
+            await createOffer(); // CHỖ NÀY PHẢI CHỜ OFFER GỬI XONG
+            startSignalingPolling();
+        }
+
+        // Gửi tin nhắn qua WebRTC Data Channel (Đồng bộ)
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+
+            if (message && dataChannel && dataChannel.readyState === 'open') {
+                dataChannel.send(message); 
+                appendMessage(currentUsername, message);
+                input.value = '';
+            } else if (message && dataChannel && dataChannel.readyState === 'connecting') {
+                setChatStatus("Vui lòng đợi kết nối P2P hoàn thành.", 'orange');
+            } else {
+                setChatStatus("Kênh P2P chưa sẵn sàng hoặc đã đóng.", 'red');
+                input.value = '';
+            }
+        }
+
+        // Lấy danh sách Peers từ Tracker (Cần await)
+        async function fetchPeerList() {
+            try {
+                const response = await fetch(SERVER_URL + '/list');
+                const peers = await response.json();
+                const peerListDiv = document.getElementById('peer-list');
+                peerListDiv.innerHTML = '';
+                
+                peers.forEach(peer => {
+                    if (peer.username === currentUsername) {
+                        document.getElementById('user-info').textContent = `Đã đăng nhập: ${currentUsername} (${peer.ip}:${peer.p2p_port})`;
+                        return;
+                    }
+
+                    const isConnectedClass = peer.status === 'online' ? 'bg-green-500' : 'bg-red-500';
+                    const peerHtml = `
+                        <div class="flex items-center justify-between p-3 bg-white rounded-lg shadow-md hover:shadow-lg transition duration-150">
+                            <div class="flex items-center">
+                                <span class="w-3 h-3 rounded-full ${isConnectedClass} mr-3"></span>
+                                <div>
+                                    <div class="font-medium text-gray-900">${peer.username}</div>
+                                    <div class="text-xs text-gray-500">${peer.ip}:${peer.p2p_port}</div>
+                                </div>
+                            </div>
+                            <button onclick="connectToPeer('${peer.username}')" 
+                                    class="text-sm bg-indigo-500 hover:bg-indigo-600 text-white py-1 px-3 rounded-md shadow-sm">
+                                Kết nối P2P
+                            </button>
+                        </div>
+                    `;
+                    peerListDiv.insertAdjacentHTML('beforeend', peerHtml);
+                });
+
+            } catch (error) {
+                console.error('[Error] Lỗi tải danh sách peer:', error);
+                document.getElementById('peer-list').innerHTML = '<div class="text-red-500">Lỗi tải danh sách peers.</div>';
+            }
+        }
+
+        // Khởi tạo (Cần await)
+        async function initializeApp() {
+            // 1. Lấy Username hiện tại
+            try {
+                const nameResponse = await fetch(SERVER_URL + '/name');
+                const nameData = await nameResponse.json();
+                currentUsername = nameData.message;
+            } catch (e) {
+                console.error("Lỗi lấy username. Có thể chưa đăng nhập.");
+                document.getElementById('user-info').textContent = "LỖI: Chưa đăng nhập.";
+                return;
+            }
+
+            // 2. Tải danh sách Peer
+            await fetchPeerList();
+
+            // 3. Bắt đầu Polling 
+            startSignalingPolling();
+        }
+
+        window.onload = initializeApp;
+    </script>
+</body>
+</html>
